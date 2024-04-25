@@ -486,7 +486,7 @@ pub async fn test(client: &mut TestHttpClient) -> TardisResult<()> {
                 "query":{
                     "q": "新增",
                     "q_scope": "title_content",
-                    "own_paths":["t001/a001", "t001/a002"],
+                    "rlike_own_paths": ["t001"],
                     "ext": [{
                         "field":"end_time",
                         "op":"<=",

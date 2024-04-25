@@ -25,12 +25,12 @@ pub struct Model {
     /// 资源类型id
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: String,
-        /// Resource kind module
+    /// Resource kind module
     ///
     /// 资源类型模块
-    /// 
+    ///
     /// Used to further divide the resource  kind. For example, there are multiple resource  kinds under the ``cmdb compute`` module, such as ``ecs, ec2, k8s``.
-    /// 
+    ///
     /// 用于对资源类型做简单的分类。比如 ``cmdb计算`` 模块下可以有 ``ecs、ec2、k8s`` 等多个资源类型。
     pub module: String,
     /// Resource kind code
@@ -59,11 +59,11 @@ pub struct Model {
     /// 资源类型排序
     pub sort: i64,
     /// Extension table name
-    /// 
+    ///
     /// 扩展表名
-    /// 
+    ///
     /// Each resource kind can specify an extension table for storing customized data.
-    /// 
+    ///
     /// 每个资源类型可以指定一个扩展表用于存储自定义数据。
     pub ext_table_name: String,
 

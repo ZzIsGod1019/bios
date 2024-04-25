@@ -13,10 +13,10 @@ use bios_basic::{
     spi::{spi_funs::SpiBsInst, spi_initializer::common},
 };
 
-use crate::dto::search_item_dto::{
+use crate::{dto::search_item_dto::{
     SearchItemAddReq, SearchItemModifyReq, SearchItemQueryReq, SearchItemSearchCtxReq, SearchItemSearchPageReq, SearchItemSearchQScopeKind, SearchItemSearchReq,
     SearchItemSearchResp, SearchQueryMetricsReq, SearchQueryMetricsResp,
-};
+}, search_enumeration::{SearchDataTypeKind, SearchQueryTimeWindowKind}};
 
 use super::search_es_initializer;
 
@@ -58,8 +58,8 @@ fn gen_data_mappings(ext: &Option<Value>) -> String {
                 "content":{{"type": "text"}},
                 "owner":{{"type": "keyword"}},
                 "own_paths":{{"type": "keyword"}},
-                "create_time":{{"type": "date"}},
-                "update_time":{{"type": "date"}},
+                "create_time":{{"type": "date", "format": "yyyyMMdd'T'HHmmss.SSSZ"}},
+                "update_time":{{"type": "date", "format": "yyyyMMdd'T'HHmmss.SSSZ"}},
                 "ext":{{{ext_string}}},
                 "visit_keys":{{
                     "properties": {{
@@ -338,13 +338,14 @@ pub async fn search(search_req: &mut SearchItemSearchReq, funs: &TardisFunsInst,
     })
 }
 
-fn gen_query_dsl(search_req: &SearchItemSearchReq) -> TardisResult<String> {
-    let mut must_q = vec![];
-    let mut must_not_q = vec![];
-    let mut should_q = vec![];
-    let mut filter_q = vec![];
-    let mut sort_q = vec![];
-
+fn gen_query_conditions(
+    search_req: &SearchItemSearchReq,
+    must_q: &mut Vec<Value>,
+    must_not_q: &mut Vec<Value>,
+    should_q: &mut Vec<Value>,
+    filter_q: &mut Vec<Value>,
+    sort_q: &mut Vec<Value>,
+) -> TardisResult<()> {
     // ctx
     let mut ctx_q = vec![];
     if let Some(accounts) = &search_req.ctx.accounts {
@@ -520,6 +521,19 @@ fn gen_query_dsl(search_req: &SearchItemSearchReq) -> TardisResult<String> {
         must_q.push(json!({
             "terms": {
                 "own_paths": own_paths.clone()
+            }
+        }));
+    }
+    if let Some(rlike_own_paths) = &search_req.query.rlike_own_paths {
+        let mut rlike_own_paths_q = vec![];
+        for own_path in rlike_own_paths {
+            rlike_own_paths_q.push(json!({
+                "prefix": {"own_paths": own_path},
+            }));
+        }
+        must_q.push(json!({
+            "bool": {
+                "should": rlike_own_paths_q,
             }
         }));
     }
@@ -804,6 +818,19 @@ fn gen_query_dsl(search_req: &SearchItemSearchReq) -> TardisResult<String> {
     } else {
         sort_q.push(json!({"create_time": { "order": "asc", "unmapped_type": "date"}}));
     }
+
+    Ok(())
+}
+
+fn gen_query_dsl(search_req: &SearchItemSearchReq) -> TardisResult<String> {
+    let mut must_q = vec![];
+    let mut must_not_q = vec![];
+    let mut should_q = vec![];
+    let mut filter_q = vec![];
+    let mut sort_q = vec![];
+
+    gen_query_conditions(search_req, &mut must_q, &mut must_not_q, &mut should_q, &mut filter_q, &mut sort_q)?;
+
     let q = json!({
         "query": {
             "bool": {
@@ -833,4 +860,96 @@ fn merge(a: &mut serde_json::Value, b: serde_json::Value) {
 
 pub async fn query_metrics(_query_req: &SearchQueryMetricsReq, funs: &TardisFunsInst, _ctx: &TardisContext, _inst: &SpiBsInst) -> TardisResult<SearchQueryMetricsResp> {
     Err(funs.err().format_error("search_es_item_serv", "query_metrics", "not supports", "500-not-supports"))
+}
+
+fn gen_query_metrics_dsl(search_req: &SearchQueryMetricsReq) -> TardisResult<String> {
+    let mut must_q = vec![];
+    let mut must_not_q = vec![];
+    let mut should_q = vec![];
+    let mut filter_q = vec![];
+    let mut sort_q = vec![];
+
+    gen_query_conditions(&SearchItemSearchReq {
+        tag: search_req.tag.clone(),
+        query: search_req.query.clone(),
+        adv_query: search_req.adv_query.clone(),
+        ctx: search_req.ctx.clone(),
+        sort: None,
+        page: SearchItemSearchPageReq::default(),
+    }, &mut must_q, &mut must_not_q, &mut should_q, &mut filter_q, &mut sort_q)?;
+
+    if let Some(wheres) = &search_req._where {
+        for or_wheres in wheres {
+            // let mut where_must_q = vec![];
+            /*
+                {
+                    //"code": "end_time",
+                    "value": "2022-10-30T14:23:20.000Z",
+                    "op": "<=",
+                    //"in_ext": true,
+                    "multi_values": false,
+                    "data_type": "datetime",
+                    "time_window": "date"
+                }
+            */
+            for mut and_where in or_wheres {
+                if and_where.data_type.valid_where(and_where.multi_values.unwrap_or(false), &and_where.op, &and_where.time_window) {
+                    continue;
+                }
+                let field = if and_where.in_ext.unwrap_or(true) {
+                    format!("ext.{}", and_where.code)
+                } else {
+                    and_where.code.clone()
+                };
+                if (and_where.data_type == SearchDataTypeKind::Date || and_where.data_type == SearchDataTypeKind::DateTime) && and_where.op == BasicQueryOpKind::Eq && and_where.time_window.is_some() {
+                    let time_window = and_where.time_window.as_ref().expect("unreachable");
+                    match time_window {
+                        SearchQueryTimeWindowKind::Date => {},
+                        SearchQueryTimeWindowKind::Hour => {},
+                        SearchQueryTimeWindowKind::Week => {},
+                        SearchQueryTimeWindowKind::Day => {},
+                        SearchQueryTimeWindowKind::Month => {},
+                        SearchQueryTimeWindowKind::Year => {},
+                    }
+
+                }
+                match and_where.data_type {
+                    SearchDataTypeKind::String => {},
+                    SearchDataTypeKind::Int => {},
+                    SearchDataTypeKind::Float => {},
+                    SearchDataTypeKind::Double => {},
+                    SearchDataTypeKind::Boolean => {},
+                    SearchDataTypeKind::Date => {},
+                    SearchDataTypeKind::DateTime => {},
+                }
+                match and_where.op {
+                    BasicQueryOpKind::Eq => {},
+                    BasicQueryOpKind::Ne => {},
+                    BasicQueryOpKind::Gt => {},
+                    BasicQueryOpKind::Ge => {},
+                    BasicQueryOpKind::Lt => {},
+                    BasicQueryOpKind::Le => {},
+                    BasicQueryOpKind::Like => {},
+                    BasicQueryOpKind::NotLike => {},
+                    BasicQueryOpKind::In => {},
+                    BasicQueryOpKind::NotIn => {},
+                    BasicQueryOpKind::IsNull => {},
+                    BasicQueryOpKind::IsNotNull => {},
+                    BasicQueryOpKind::IsNullOrEmpty => {},
+                }
+                if let Some(time_window) = &and_where.time_window {
+                    match time_window {
+                        SearchQueryTimeWindowKind::Date => {},
+                        SearchQueryTimeWindowKind::Hour => {},
+                        SearchQueryTimeWindowKind::Week => {},
+                        SearchQueryTimeWindowKind::Day => {},
+                        SearchQueryTimeWindowKind::Month => {},
+                        SearchQueryTimeWindowKind::Year => {},
+                    }
+                }
+            }
+        }
+    }
+
+    Ok("".to_string())
 }

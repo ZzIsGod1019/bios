@@ -116,6 +116,17 @@ impl SearchDataTypeKind {
         })
     }
 
+    pub fn valid_where(&self, multi_values: bool, op: &BasicQueryOpKind, time_window_fun: &Option<SearchQueryTimeWindowKind>,) -> bool {
+        !(multi_values && (time_window_fun.is_some() || op != &BasicQueryOpKind::In)
+        || self == &SearchDataTypeKind::Int && (op == &BasicQueryOpKind::In || op == &BasicQueryOpKind::Like)
+        || self == &SearchDataTypeKind::Float && (op == &BasicQueryOpKind::In || op == &BasicQueryOpKind::Like)
+        || self == &SearchDataTypeKind::Double && (op == &BasicQueryOpKind::In || op == &BasicQueryOpKind::Like)
+        || self == &SearchDataTypeKind::Boolean && (op != &BasicQueryOpKind::Eq && op != &BasicQueryOpKind::Ne)
+        || self == &SearchDataTypeKind::Date && (op == &BasicQueryOpKind::In || op == &BasicQueryOpKind::Like)
+        || self == &SearchDataTypeKind::DateTime && (op == &BasicQueryOpKind::In || op == &BasicQueryOpKind::Like)
+        || (self != &SearchDataTypeKind::Date && self != &SearchDataTypeKind::DateTime) && time_window_fun.is_some())
+    }
+
     pub(crate) fn to_pg_where(
         &self,
         multi_values: bool,
@@ -128,7 +139,7 @@ impl SearchDataTypeKind {
         if value.is_null() {
             return Ok(None);
         }
-        let value = if (self == &SearchDataTypeKind::DateTime || self != &SearchDataTypeKind::Date) && value.is_string() {
+        let value = if (self == &SearchDataTypeKind::DateTime || self == &SearchDataTypeKind::Date) && value.is_string() {
             if time_window_fun.is_some() {
                 Some(vec![sea_orm::Value::from(value.as_str().ok_or_else(|| self.err_json_value_type())?.to_string())])
             } else {
@@ -142,14 +153,7 @@ impl SearchDataTypeKind {
             return Err(TardisError::internal_error("json_to_sea_orm_value result is empty", "spi-stats-inaternal-error"));
         };
         Ok(
-            if multi_values && (time_window_fun.is_some() || op != &BasicQueryOpKind::In)
-                || self == &SearchDataTypeKind::Int && (op == &BasicQueryOpKind::In || op == &BasicQueryOpKind::Like)
-                || self == &SearchDataTypeKind::Float && (op == &BasicQueryOpKind::In || op == &BasicQueryOpKind::Like)
-                || self == &SearchDataTypeKind::Double && (op == &BasicQueryOpKind::In || op == &BasicQueryOpKind::Like)
-                || self == &SearchDataTypeKind::Boolean && (op != &BasicQueryOpKind::Eq && op != &BasicQueryOpKind::Ne)
-                || self == &SearchDataTypeKind::Date && (op == &BasicQueryOpKind::In || op == &BasicQueryOpKind::Like)
-                || self == &SearchDataTypeKind::DateTime && (op == &BasicQueryOpKind::In || op == &BasicQueryOpKind::Like)
-                || (self != &SearchDataTypeKind::Date && self != &SearchDataTypeKind::DateTime) && time_window_fun.is_some()
+            if !self.valid_where(multi_values, op, time_window_fun)
             {
                 None
             } else if multi_values {
@@ -359,59 +363,30 @@ pub enum SearchQueryTimeWindowKind {
 
 impl SearchQueryTimeWindowKind {
     pub fn to_sql(&self, column_name: &str, is_date_time: bool) -> String {
-        if is_date_time {
-            match self {
-                SearchQueryTimeWindowKind::Date => format!("date(timezone('UTC', {column_name}::timestamp))"),
-                // SearchQueryTimeWindowKind::Hour => format!("date_part('hour',timezone('UTC', {column_name}))"),
-                SearchQueryTimeWindowKind::Hour => format!(
-                    "CONCAT(date_part('year', timezone('UTC', {column_name}::timestamp)), '-',
-                LPAD(date_part('month', timezone('UTC', {column_name}::timestamp))::text, 2, '0'), '-',
-                LPAD(date_part('day', timezone('UTC', {column_name}::timestamp))::text, 2, '0'), ' ',
-                LPAD(date_part('hour', timezone('UTC', {column_name}::timestamp))::text, 2, '0'))"
-                ),
-                // SearchQueryTimeWindowKind::Day => format!("date_part('day',timezone('UTC', {column_name}))"),
-                SearchQueryTimeWindowKind::Day => format!(
-                    "CONCAT(date_part('year', timezone('UTC', {column_name}::timestamp)), '-',
-                LPAD(date_part('month', timezone('UTC', {column_name}::timestamp))::text, 2, '0'), '-',
-                LPAD(date_part('day', timezone('UTC', {column_name}::timestamp))::text, 2, '0'))"
-                ),
-                SearchQueryTimeWindowKind::Week => format!(
-                    "CONCAT(date_part('year', timezone('UTC', {column_name}::timestamp)), ' ',
-                    date_part('week', timezone('UTC', {column_name}::timestamp)))"
-                ),
-                // SearchQueryTimeWindowKind::Month => format!("date_part('month',timezone('UTC', {column_name}))"),
-                SearchQueryTimeWindowKind::Month => {
-                    format!("CONCAT(date_part('year', timezone('UTC',{column_name}::timestamp)), '-',LPAD(date_part('month', timezone('UTC', {column_name}::timestamp))::text, 2, '0'))")
-                }
-                SearchQueryTimeWindowKind::Year => format!("CONCAT(date_part('year',timezone('UTC', {column_name}::timestamp)),'')"),
+        match self {
+            SearchQueryTimeWindowKind::Date => if is_date_time { format!("date(timezone('UTC', {column_name}::timestamp))") } else { column_name.to_string() },
+            // SearchQueryTimeWindowKind::Hour => format!("date_part('hour',timezone('UTC', {column_name}))"),
+            SearchQueryTimeWindowKind::Hour => format!(
+                "CONCAT(date_part('year', timezone('UTC', {column_name}::timestamp)), '-',
+            LPAD(date_part('month', timezone('UTC', {column_name}::timestamp))::text, 2, '0'), '-',
+            LPAD(date_part('day', timezone('UTC', {column_name}::timestamp))::text, 2, '0'), ' ',
+            LPAD(date_part('hour', timezone('UTC', {column_name}::timestamp))::text, 2, '0'))"
+            ),
+            // SearchQueryTimeWindowKind::Day => format!("date_part('day',timezone('UTC', {column_name}))"),
+            SearchQueryTimeWindowKind::Day => format!(
+                "CONCAT(date_part('year', timezone('UTC', {column_name}::timestamp)), '-',
+            LPAD(date_part('month', timezone('UTC', {column_name}::timestamp))::text, 2, '0'), '-',
+            LPAD(date_part('day', timezone('UTC', {column_name}::timestamp))::text, 2, '0'))"
+            ),
+            SearchQueryTimeWindowKind::Week => format!(
+                "CONCAT(date_part('year', timezone('UTC', {column_name}::timestamp)), ' ',
+                date_part('week', timezone('UTC', {column_name}::timestamp)))"
+            ),
+            // SearchQueryTimeWindowKind::Month => format!("date_part('month',timezone('UTC', {column_name}))"),
+            SearchQueryTimeWindowKind::Month => {
+                format!("CONCAT(date_part('year', timezone('UTC',{column_name}::timestamp)), '-',LPAD(date_part('month', timezone('UTC', {column_name}::timestamp))::text, 2, '0'))")
             }
-        } else {
-            match self {
-                SearchQueryTimeWindowKind::Date => column_name.to_string(),
-                // SearchQueryTimeWindowKind::Hour => format!("date_part('hour', {column_name})"),
-                // SearchQueryTimeWindowKind::Day => format!("date_part('day', {column_name})"),
-                // SearchQueryTimeWindowKind::Month => format!("date_part('month', {column_name})"),
-                // SearchQueryTimeWindowKind::Year => format!("date_part('year', {column_name})"),
-                SearchQueryTimeWindowKind::Hour => format!(
-                    "CONCAT(date_part('year', timezone('UTC', {column_name}::timestamp)), '-',
-                LPAD(date_part('month', timezone('UTC', {column_name}::timestamp))::text, 2, '0'), '-',
-                LPAD(date_part('day', timezone('UTC', {column_name}::timestamp))::text, 2, '0'), ' ',
-                LPAD(date_part('hour', timezone('UTC', {column_name}::timestamp))::text, 2, '0'))"
-                ),
-                SearchQueryTimeWindowKind::Day => format!(
-                    "CONCAT(date_part('year', timezone('UTC', {column_name}::timestamp)), '-',
-                LPAD(date_part('month', timezone('UTC', {column_name}::timestamp))::text, 2, '0'), '-',
-                LPAD(date_part('day', timezone('UTC', {column_name}::timestamp))::text, 2, '0'))"
-                ),
-                SearchQueryTimeWindowKind::Week => format!(
-                    "CONCAT(date_part('year', timezone('UTC', {column_name}::timestamp)), ' ',
-                    date_part('week', timezone('UTC', {column_name}::timestamp)))"
-                ),
-                SearchQueryTimeWindowKind::Month => {
-                    format!("CONCAT(date_part('year', timezone('UTC',{column_name}::timestamp)), '-',LPAD(date_part('month', timezone('UTC', {column_name}::timestamp))::text, 2, '0'))")
-                }
-                SearchQueryTimeWindowKind::Year => format!("CONCAT(date_part('year',timezone('UTC', {column_name}::timestamp)),'')"),
-            }
+            SearchQueryTimeWindowKind::Year => format!("CONCAT(date_part('year',timezone('UTC', {column_name}::timestamp)),'')"),
         }
     }
 }

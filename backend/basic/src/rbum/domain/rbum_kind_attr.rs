@@ -51,8 +51,8 @@ pub struct Model {
     /// Attribute definition module
     ///
     /// 属性定义模块
-    /// 
-    /// Used to distinguish different instances of the same resource kind. 
+    ///
+    /// Used to distinguish different instances of the same resource kind.
     /// For example, the ``user`` kind resource, different tenants can have different Attribute definitions.
     ///
     /// 用于区别使用同一资源类型的不同实例。比如 ``用户`` 类型的资源，不同的租户可以有不同的属性定义。

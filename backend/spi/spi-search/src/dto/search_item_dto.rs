@@ -110,7 +110,7 @@ pub struct SearchItemSearchReq {
     pub page: SearchItemSearchPageReq,
 }
 
-#[derive(poem_openapi::Object, Serialize, Deserialize, Debug)]
+#[derive(poem_openapi::Object, Serialize, Deserialize, Debug, Clone)]
 pub struct SearchItemSearchCtxReq {
     pub accounts: Option<Vec<String>>,
     pub apps: Option<Vec<String>>,
@@ -142,7 +142,7 @@ impl SearchItemSearchCtxReq {
     }
 }
 
-#[derive(poem_openapi::Object, Serialize, Deserialize, Debug, Default)]
+#[derive(poem_openapi::Object, Serialize, Deserialize, Debug, Default, Clone)]
 pub struct AdvSearchItemQueryReq {
     pub group_by_or: Option<bool>,
     pub ext_by_or: Option<bool>,
@@ -170,7 +170,7 @@ impl From<AdvBasicQueryCondInfo> for BasicQueryCondInfo {
     }
 }
 
-#[derive(poem_openapi::Object, Serialize, Deserialize, Debug, Default)]
+#[derive(poem_openapi::Object, Serialize, Deserialize, Debug, Default, Clone)]
 pub struct SearchItemQueryReq {
     pub in_q_content: Option<bool>,
     // Fuzzy search content
@@ -194,7 +194,7 @@ pub struct SearchItemQueryReq {
     pub ext: Option<Vec<BasicQueryCondInfo>>,
 }
 
-#[derive(poem_openapi::Enum, Serialize, Deserialize, Debug)]
+#[derive(poem_openapi::Enum, Serialize, Deserialize, Debug, Clone)]
 pub enum SearchItemSearchQScopeKind {
     #[oai(rename = "title")]
     Title,
@@ -228,7 +228,7 @@ impl SearchItemSearchSortKind {
     }
 }
 
-#[derive(poem_openapi::Object, Serialize, Deserialize, Debug)]
+#[derive(poem_openapi::Object, Serialize, Deserialize, Debug, Default)]
 pub struct SearchItemSearchPageReq {
     pub number: u32,
     pub size: u16,
