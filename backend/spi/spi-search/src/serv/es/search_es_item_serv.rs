@@ -58,8 +58,8 @@ fn gen_data_mappings(ext: &Option<Value>) -> String {
                 "content":{{"type": "text"}},
                 "owner":{{"type": "keyword"}},
                 "own_paths":{{"type": "keyword"}},
-                "create_time":{{"type": "date", "format": "yyyyMMdd'T'HHmmss.SSSZ"}},
-                "update_time":{{"type": "date", "format": "yyyyMMdd'T'HHmmss.SSSZ"}},
+                "create_time":{{"type": "date"}},
+                "update_time":{{"type": "date"}},
                 "ext":{{{ext_string}}},
                 "visit_keys":{{
                     "properties": {{
