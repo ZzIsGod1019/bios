@@ -25,7 +25,6 @@ use tardis::{
         JoinType, Set,
     },
     futures_util::future::join_all,
-    log::debug,
     serde_json::Value,
     web::web_resp::TardisPage,
     TardisFuns, TardisFunsInst,
@@ -43,7 +42,7 @@ use crate::{
         flow_model_dto::{FlowModelDetailResp, FlowModelFilterReq},
         flow_state_dto::{FlowStateFilterReq, FlowStateRelModelExt, FlowSysStateKind},
         flow_transition_dto::{FlowTransitionDetailResp, FlowTransitionFrontActionInfo},
-        flow_var_dto::FillType,
+        flow_var_dto::{DefaultValueType, FillType},
     },
     flow_config::FlowConfig,
     flow_constants,
@@ -83,7 +82,7 @@ impl FlowInstServ {
             if current_state_name.is_empty() {
                 flow_model.init_state_id.clone()
             } else {
-                FlowStateServ::match_state_id_by_name(&start_req.tag, &flow_model_id, current_state_name, funs, ctx).await?
+                FlowStateServ::match_state_id_by_name(&flow_model_id, current_state_name, funs, ctx).await?
             }
         } else {
             flow_model.init_state_id.clone()
@@ -121,21 +120,13 @@ impl FlowInstServ {
                 || rel_business_obj.own_paths.is_none()
                 || rel_business_obj.owner.is_none()
             {
-                debug!("rel_business_obj: {:?}", rel_business_obj);
                 return Err(funs.err().not_found("flow_inst_serv", "batch_bind", "req is valid", ""));
             }
             current_ctx.own_paths = rel_business_obj.own_paths.clone().unwrap_or_default();
             current_ctx.owner = rel_business_obj.owner.clone().unwrap_or_default();
             let flow_model_id = Self::get_model_id_by_own_paths_and_rel_template_id(&batch_bind_req.tag, None, funs, ctx).await?;
 
-            let current_state_id = FlowStateServ::match_state_id_by_name(
-                &batch_bind_req.tag,
-                &flow_model_id,
-                &rel_business_obj.current_state_name.clone().unwrap_or_default(),
-                funs,
-                ctx,
-            )
-            .await?;
+            let current_state_id = FlowStateServ::match_state_id_by_name(&flow_model_id, &rel_business_obj.current_state_name.clone().unwrap_or_default(), funs, ctx).await?;
             let mut inst_id = Self::get_inst_ids_by_rel_business_obj_id(vec![rel_business_obj.rel_business_obj_id.clone().unwrap_or_default()], funs, ctx).await?.pop();
             if inst_id.is_none() {
                 let id = TardisFuns::field.nanoid();
@@ -212,6 +203,7 @@ impl FlowInstServ {
                 scope_level -= 1;
             }
         }
+        // if model is not found,get default model
         if result.is_none() {
             result = FlowModelServ::find_one_item(
                 &FlowModelFilterReq {
@@ -1031,33 +1023,14 @@ impl FlowInstServ {
                             vars.into_iter()
                                 .map(|mut var| {
                                     if let Some(default) = var.default_value.clone() {
-                                        let default_value = match default.value_type {
-                                            crate::dto::flow_var_dto::DefaultValueType::Custom => default.value,
-                                            crate::dto::flow_var_dto::DefaultValueType::AssociatedAttr => {
-                                                if let Some(current_vars) = flow_inst.current_vars.as_ref() {
-                                                    current_vars.get(default.value.as_str().unwrap_or(&var.name)).cloned().unwrap_or_default()
-                                                } else {
-                                                    Value::String("".to_string())
-                                                }
-                                            }
-                                            crate::dto::flow_var_dto::DefaultValueType::AutoFill => {
-                                                match FillType::from_str(default.value.as_str().ok_or_else(|| {
-                                                    funs.err().bad_request(
-                                                        "flow_transitions",
-                                                        "default_value_type_parse",
-                                                        "AutoFill default value type is not string",
-                                                        "400-flow-inst-vars-field-missing",
-                                                    )
-                                                })?)
-                                                .map_err(|err| {
-                                                    funs.err().internal_error("flow_transitions", "default_value_type_parse", &err.to_string(), "400-flow-inst-vars-field-missing")
-                                                })? {
-                                                    FillType::Time => Value::Number(Utc::now().timestamp_millis().into()),
-                                                    FillType::Person => Value::String(ctx.owner.clone()),
-                                                }
-                                            }
-                                        };
-                                        var.dyn_default_value = Some(default_value);
+                                        var.dyn_default_value = Some(Self::get_var_dyn_default_value(
+                                            flow_inst.current_vars.as_ref(),
+                                            &var.name,
+                                            default.value_type,
+                                            default.value,
+                                            funs,
+                                            ctx,
+                                        )?);
                                     };
                                     Ok(var)
                                 })
@@ -1079,6 +1052,41 @@ impl FlowInstServ {
             next_flow_transitions: next_transitions,
         };
         Ok(state_and_next_transitions)
+    }
+
+    fn get_var_dyn_default_value(
+        current_vars: Option<&HashMap<String, Value>>,
+        var_name: &str,
+        value_type: DefaultValueType,
+        value: Value,
+        funs: &TardisFunsInst,
+        ctx: &TardisContext,
+    ) -> TardisResult<Value> {
+        Ok(match value_type {
+            crate::dto::flow_var_dto::DefaultValueType::Custom => value,
+            crate::dto::flow_var_dto::DefaultValueType::AssociatedAttr => {
+                if let Some(current_vars) = current_vars {
+                    current_vars.get(value.as_str().unwrap_or(var_name)).cloned().unwrap_or_default()
+                } else {
+                    Value::String("".to_string())
+                }
+            }
+            crate::dto::flow_var_dto::DefaultValueType::AutoFill => {
+                match FillType::from_str(value.as_str().ok_or_else(|| {
+                    funs.err().bad_request(
+                        "flow_transitions",
+                        "default_value_type_parse",
+                        "AutoFill default value type is not string",
+                        "400-flow-inst-vars-field-missing",
+                    )
+                })?)
+                .map_err(|err| funs.err().internal_error("flow_transitions", "default_value_type_parse", &err.to_string(), "400-flow-inst-vars-field-missing"))?
+                {
+                    FillType::Time => Value::Number(Utc::now().timestamp_millis().into()),
+                    FillType::Person => Value::String(ctx.owner.clone()),
+                }
+            }
+        })
     }
 
     pub async fn state_is_used(flow_model_id: &str, flow_state_id: &str, funs: &TardisFunsInst, _ctx: &TardisContext) -> TardisResult<bool> {
@@ -1215,12 +1223,7 @@ impl FlowInstServ {
                     ..global_ctx.clone()
                 };
                 let new_vars = Self::get_new_vars(&flow_inst.id, funs, &ctx).await?;
-                Self::modify_current_vars(
-                    &flow_inst.id,
-                    &TardisFuns::json.json_to_obj::<HashMap<String, Value>>(new_vars).unwrap_or_default(),
-                    &ctx,
-                )
-                .await?;
+                Self::modify_current_vars(&flow_inst.id, &TardisFuns::json.json_to_obj::<HashMap<String, Value>>(new_vars).unwrap_or_default(), &ctx).await?;
             }
         }
 
