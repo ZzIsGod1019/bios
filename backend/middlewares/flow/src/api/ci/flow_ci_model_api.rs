@@ -132,17 +132,21 @@ impl FlowCiModelApi {
         let mut result = HashMap::new();
         let mut orginal_models = HashMap::new();
         let mut mock_ctx = ctx.0.clone();
-        if rbum_scope_helper::get_scope_level_by_context(&ctx.0)? == RbumScopeLevelKind::L1 {
-            orginal_models = FlowModelServ::find_rel_models(req.0.rel_template_id.clone(), true, &funs, &ctx.0).await?;
-        } else if rbum_scope_helper::get_scope_level_by_context(&ctx.0)? == RbumScopeLevelKind::L2 {
-            orginal_models = FlowModelServ::find_rel_models(None, true, &funs, &ctx.0).await?;
-            mock_ctx = match req.0.op {
-                FlowModelAssociativeOperationKind::Copy => ctx.0.clone(),
-                FlowModelAssociativeOperationKind::Reference => TardisContext {
-                    own_paths: rbum_scope_helper::get_path_item(RbumScopeLevelKind::L1.to_int(), &ctx.0.own_paths).unwrap_or_default(),
-                    ..ctx.0.clone()
-                },
-            };
+        match rbum_scope_helper::get_scope_level_by_context(&ctx.0)? {
+            RbumScopeLevelKind::L1 => {
+                orginal_models = FlowModelServ::find_rel_models(req.0.rel_template_id.clone(), true, &funs, &ctx.0).await?;
+            }
+            RbumScopeLevelKind::L2 => {
+                orginal_models = FlowModelServ::find_rel_models(None, true, &funs, &ctx.0).await?;
+                mock_ctx = match req.0.op {
+                    FlowModelAssociativeOperationKind::Copy => ctx.0.clone(),
+                    FlowModelAssociativeOperationKind::Reference => TardisContext {
+                        own_paths: rbum_scope_helper::get_path_item(RbumScopeLevelKind::L1.to_int(), &ctx.0.own_paths).unwrap_or_default(),
+                        ..ctx.0.clone()
+                    },
+                };
+            }
+            _ => {}
         }
 
         for rel_model_id in rel_model_ids {

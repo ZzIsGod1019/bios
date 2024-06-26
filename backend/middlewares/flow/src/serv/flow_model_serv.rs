@@ -3,12 +3,12 @@ use std::{collections::HashMap, vec};
 use async_recursion::async_recursion;
 use bios_basic::rbum::{
     dto::{
-        rbum_filer_dto::RbumBasicFilterReq,
+        rbum_filer_dto::{RbumBasicFilterReq, RbumItemRelFilterReq},
         rbum_item_dto::{RbumItemKernelAddReq, RbumItemKernelModifyReq},
         rbum_rel_dto::RbumRelModifyReq,
     },
     helper::rbum_scope_helper,
-    rbum_enumeration::RbumScopeLevelKind,
+    rbum_enumeration::{RbumRelFromKind, RbumScopeLevelKind},
     serv::{
         rbum_crud_serv::{ID_FIELD, NAME_FIELD, REL_DOMAIN_ID_FIELD, REL_KIND_ID_FIELD},
         rbum_item_serv::{RbumItemCrudOperation, RBUM_ITEM_TABLE},
@@ -976,6 +976,80 @@ impl FlowModelServ {
             result.insert(model.tag.clone(), model);
         }
 
+        Ok(result)
+    }
+
+    //
+    pub async fn find_models_by_rel_template_id(
+        tag: String,
+        template: Option<bool>,
+        rel_template_id: Option<String>,
+        funs: &TardisFunsInst,
+        ctx: &TardisContext,
+    ) -> TardisResult<Vec<FlowModelSummaryResp>> {
+        let mut result = vec![];
+        let mut not_bind_template_models = join_all(
+            FlowModelServ::find_items(
+                &FlowModelFilterReq {
+                    basic: RbumBasicFilterReq {
+                        ignore_scope: true,
+                        with_sub_own_paths: false,
+                        ..Default::default()
+                    },
+                    tags: Some(vec![tag.clone()]),
+                    template,
+                    ..Default::default()
+                },
+                Some(true),
+                None,
+                funs,
+                ctx,
+            )
+            .await?
+            .into_iter()
+            .map(|model| async move {
+                let funs = flow_constants::get_tardis_inst();
+                let global_ctx: TardisContext = TardisContext::default();
+                if FlowRelServ::find_from_simple_rels(&FlowRelKind::FlowModelTemplate, &model.id, None, None, &funs, &global_ctx).await.unwrap().is_empty() {
+                    Some(model)
+                } else {
+                    None
+                }
+            }),
+        )
+        .await
+        .into_iter()
+        .flatten()
+        .collect_vec();
+        result.append(&mut not_bind_template_models);
+        if let Some(rel_template_id) = rel_template_id {
+            let mut rel_template_models = FlowModelServ::find_items(
+                &FlowModelFilterReq {
+                    basic: RbumBasicFilterReq {
+                        ignore_scope: true,
+                        with_sub_own_paths: false,
+                        ..Default::default()
+                    },
+                    tags: Some(vec![tag.clone()]),
+                    template,
+                    rel: Some(RbumItemRelFilterReq {
+                        optional: false,
+                        rel_by_from: true,
+                        tag: Some(FlowRelKind::FlowModelTemplate.to_string()),
+                        from_rbum_kind: Some(RbumRelFromKind::Item),
+                        rel_item_id: Some(rel_template_id),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                Some(true),
+                None,
+                funs,
+                ctx,
+            )
+            .await?;
+            result.append(&mut rel_template_models);
+        }
         Ok(result)
     }
 
