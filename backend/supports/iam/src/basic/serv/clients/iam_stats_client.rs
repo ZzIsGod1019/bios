@@ -40,6 +40,10 @@ impl IamStatsClient {
             ctx,
         )
         .await?;
+        let mock_ctx = TardisContext {
+            own_paths: org_cate.own_paths,
+            ..ctx_clone.clone()
+        };
         let set = RbumSetServ::get_rbum(
             &org_cate.rel_rbum_set_id,
             &RbumSetFilterReq {
@@ -84,8 +88,8 @@ impl IamStatsClient {
             Box::pin(async move {
                 let task_handle = tokio::spawn(async move {
                     let funs = iam_constants::get_tardis_inst();
-                    let _ = Self::org_fact_record_load(org_cate_id.clone(), account_ids, &funs, &ctx_clone).await;
-                    let _ = IamKvClient::async_add_or_modify_key_name(funs.conf::<IamConfig>().spi.kv_orgs_prefix.clone(), org_cate_id, org_cate.name, &funs, &ctx_clone).await;
+                    let _ = Self::org_fact_record_load(org_cate_id.clone(), account_ids, &funs, &mock_ctx).await;
+                    let _ = IamKvClient::async_add_or_modify_key_name(funs.conf::<IamConfig>().spi.kv_orgs_prefix.clone(), org_cate_id, org_cate.name, &funs, &mock_ctx).await;
                 });
                 task_handle.await.unwrap();
                 Ok(())
@@ -105,7 +109,7 @@ impl IamStatsClient {
             }),
             ext: None,
         };
-        SpiStatsClient::fact_record_load(&funs.conf::<IamConfig>().spi.kv_orgs_prefix.clone(), &org_id, add_req, funs, ctx).await?;
+        SpiStatsClient::fact_record_load(&funs.conf::<IamConfig>().spi.stats_orgs_prefix.clone(), &org_id, add_req, funs, ctx).await?;
         Ok(())
     }
 
@@ -126,7 +130,7 @@ impl IamStatsClient {
     }
 
     pub async fn org_fact_record_remove(org_id: String, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<()> {
-        SpiStatsClient::fact_record_delete(&funs.conf::<IamConfig>().spi.kv_orgs_prefix.clone(), &org_id, funs, ctx).await?;
+        SpiStatsClient::fact_record_delete(&funs.conf::<IamConfig>().spi.stats_orgs_prefix.clone(), &org_id, funs, ctx).await?;
         Ok(())
     }
 }
