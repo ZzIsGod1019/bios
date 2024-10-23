@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use tardis::{
     basic::field::TrimString,
     chrono::{DateTime, Utc},
-    db::sea_orm,
+    db::sea_orm::{self, prelude::*},
     serde_json::Value,
     web::poem_openapi,
     TardisFuns,
@@ -67,6 +67,18 @@ impl From<FlowModelDetailResp> for FlowModelAddReq {
             disabled: Some(value.disabled),
         }
     }
+}
+
+/// 工作流模型类型 
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, poem_openapi::Enum, EnumIter, sea_orm::DeriveActiveEnum)]
+#[sea_orm(rs_type = "String", db_type = "String(StringLen::N(255))")]
+pub enum FlowModelKind {
+    #[sea_orm(string_value = "reference")]
+    Reference,
+    #[sea_orm(string_value = "copy")]
+    Copy,
+    #[sea_orm(string_value = "referenceAndCopy")]
+    ReferenceAndCopy,
 }
 
 /// 修改请求

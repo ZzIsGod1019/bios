@@ -110,7 +110,7 @@ impl FlowLogClient {
             own_paths,
             msg: None,
             owner_name,
-            push: push,
+            push,
         };
         SpiLogClient::add(req, funs, ctx).await?;
         Ok(())
