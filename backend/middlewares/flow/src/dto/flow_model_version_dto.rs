@@ -21,7 +21,7 @@ pub enum FlowModelVesionState {
 }
 
 /// 添加请求
-#[derive(Serialize, Deserialize, Debug, poem_openapi::Object)]
+#[derive(Clone, Serialize, Deserialize, Debug, poem_openapi::Object)]
 pub struct FlowModelVersionAddReq {
     #[oai(validator(min_length = "2", max_length = "200"))]
     pub name: TrimString,
@@ -39,7 +39,7 @@ pub struct FlowModelVersionAddReq {
 }
 
 /// 模型绑定状态节点
-#[derive(Serialize, Deserialize, Debug, poem_openapi::Object)]
+#[derive(Clone, Serialize, Deserialize, Debug, poem_openapi::Object)]
 pub struct FlowModelVersionBindState {
     /// 若存在则表示，绑定已有状态节点
     pub exist_state_id: Option<String>,
@@ -54,7 +54,7 @@ pub struct FlowModelVersionBindState {
 }
 
 /// 添加请求
-#[derive(Serialize, Deserialize, Debug, poem_openapi::Object)]
+#[derive(Serialize, Deserialize, Debug, Default, poem_openapi::Object)]
 pub struct FlowModelVersionModifyReq {
     #[oai(validator(min_length = "2", max_length = "200"))]
     pub name: Option<TrimString>,
@@ -77,8 +77,6 @@ pub struct FlowModelVersionSummaryResp {
     pub name: String,
     /// 关联的模型ID
     pub rel_model_id: String,
-    /// 当前配置信息的签名
-    pub current_version_sign: String,
     /// Initial state / 初始状态
     ///
     /// Define the initial state of each model
@@ -108,8 +106,6 @@ pub struct FlowModelVersionDetailResp {
     pub name: String,
     /// 初始化状态ID
     pub init_state_id: String,
-    /// 当前配置信息的签名
-    pub current_version_sign: String,
     /// 关联父级模型ID
     pub rel_model_id: String,
     // 状态信息
@@ -141,6 +137,7 @@ pub struct FlowModelVersionFilterReq {
     pub basic: RbumBasicFilterReq,
 
     pub own_paths: Option<Vec<String>>,
+    pub status: Option<Vec<FlowModelVesionState>>,
     /// 关联模型ID
     pub rel_model_ids: Option<Vec<String>>,
 

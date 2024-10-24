@@ -13,7 +13,7 @@ use tardis::{
 
 use super::flow_transition_dto::FlowTransitionDetailResp;
 
-#[derive(Serialize, Deserialize, Default, Debug, poem_openapi::Object)]
+#[derive(Clone, Serialize, Deserialize, Default, Debug, poem_openapi::Object)]
 pub struct FlowStateAddReq {
     #[oai(validator(min_length = "2", max_length = "200"))]
     pub id_prefix: Option<TrimString>,
@@ -154,7 +154,7 @@ pub struct FlowStateFilterReq {
     pub tag: Option<String>,
     pub state_kind: Option<FlowStateKind>,
     pub template: Option<bool>,
-    pub flow_model_ids: Option<Vec<String>>,
+    pub flow_version_ids: Option<Vec<String>>,
 }
 
 impl RbumItemFilterFetcher for FlowStateFilterReq {
@@ -208,5 +208,7 @@ pub struct FlowStateAggResp {
     pub name: String,
     pub is_init: bool,
     pub ext: FlowStateRelModelExt,
+    pub state_kind: FlowStateKind,
+    pub kind_conf: Value,
     pub transitions: Vec<FlowTransitionDetailResp>,
 }

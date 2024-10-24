@@ -4,7 +4,6 @@ use bios_basic::rbum::{
     dto::rbum_filer_dto::{RbumBasicFilterReq, RbumItemFilterFetcher, RbumItemRelFilterReq},
     rbum_enumeration::RbumScopeLevelKind,
 };
-use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use tardis::{
     basic::field::TrimString,
@@ -16,8 +15,7 @@ use tardis::{
 };
 
 use super::{
-    flow_state_dto::{FlowStateAggResp, FlowStateRelModelExt, FlowStateRelModelModifyReq},
-    flow_transition_dto::{FlowTransitionAddReq, FlowTransitionDetailResp, FlowTransitionModifyReq},
+    flow_model_version_dto::FlowModelVersionAddReq, flow_state_dto::{FlowStateAggResp, FlowStateRelModelExt, FlowStateRelModelModifyReq}, flow_transition_dto::{FlowTransitionAddReq, FlowTransitionDetailResp, FlowTransitionModifyReq}
 };
 
 /// 添加请求
@@ -29,14 +27,13 @@ pub struct FlowModelAddReq {
     pub icon: Option<String>,
     #[oai(validator(max_length = "2000"))]
     pub info: Option<String>,
-    /// 初始化状态ID
-    pub init_state_id: String,
     /// 关联模板ID（目前可能是页面模板ID，或者是项目模板ID）
     pub rel_template_ids: Option<Vec<String>>,
-    /// 绑定的动作
-    pub transitions: Option<Vec<FlowTransitionAddReq>>,
-    /// 绑定的状态
-    pub states: Option<Vec<FlowModelBindStateReq>>,
+    /// 创建的可用版本
+    pub add_version: Option<FlowModelVersionAddReq>,
+    pub current_version_id: Option<String>,
+    /// 工作流模型类型
+    pub kind: FlowModelKind,
     /// 是否作为模板使用
     pub template: bool,
     /// 关联父级模型ID
@@ -50,16 +47,14 @@ pub struct FlowModelAddReq {
 
 impl From<FlowModelDetailResp> for FlowModelAddReq {
     fn from(value: FlowModelDetailResp) -> Self {
-        let transitions = value.transitions().into_iter().map(FlowTransitionAddReq::from).collect_vec();
-        let states = value.states().into_iter().map(FlowModelBindStateReq::from).collect_vec();
         Self {
             name: value.name.as_str().into(),
             icon: Some(value.icon.clone()),
             info: Some(value.info.clone()),
-            init_state_id: value.init_state_id,
+            kind: value.kind,
             rel_template_ids: Some(value.rel_template_ids.clone()),
-            transitions: if transitions.is_empty() { None } else { Some(transitions) },
-            states: if states.is_empty() { None } else { Some(states) },
+            add_version: None,
+            current_version_id: None,
             template: value.template,
             rel_model_id: None,
             tag: Some(value.tag.clone()),
@@ -90,8 +85,6 @@ pub struct FlowModelModifyReq {
     pub icon: Option<String>,
     #[oai(validator(max_length = "2000"))]
     pub info: Option<String>,
-    /// 初始化状态ID
-    pub init_state_id: Option<String>,
     /// 是否作为模板使用
     pub template: Option<bool>,
     /// 添加动作
@@ -124,8 +117,6 @@ pub struct FlowModelSummaryResp {
     pub name: String,
     pub icon: String,
     pub info: String,
-    /// 初始化状态ID
-    pub init_state_id: String,
 
     pub owner: String,
     pub own_paths: String,
@@ -144,8 +135,7 @@ pub struct FlowModelDetailResp {
     pub name: String,
     pub icon: String,
     pub info: String,
-    /// 初始化状态ID
-    pub init_state_id: String,
+    pub kind: FlowModelKind,
     /// 是否作为模板使用
     pub template: bool,
     /// 关联父级模型ID
@@ -224,8 +214,6 @@ pub struct FlowModelAggResp {
     pub name: String,
     pub icon: String,
     pub info: String,
-    /// 初始化状态ID
-    pub init_state_id: String,
     /// 是否作为模板使用
     pub template: bool,
     /// 关联父级模型ID

@@ -22,9 +22,6 @@ pub struct Model {
     /// Define the initial state of each model
     /// 定义每个模块的初始状态
     pub init_state_id: String,
-
-    /// 当前配置信息的签名
-    pub current_version_sign: String,
     /// 状态 启用中 已关闭
     pub status: FlowModelVesionState,
     /// Creation time / 创建时间

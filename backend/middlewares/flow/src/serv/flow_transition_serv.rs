@@ -2,17 +2,17 @@ use bios_basic::rbum::serv::{rbum_crud_serv::{ID_FIELD, NAME_FIELD, REL_DOMAIN_I
 use itertools::Itertools;
 use tardis::{basic::{dto::TardisContext, result::TardisResult}, chrono::Utc, db::sea_orm::{prelude::Expr, sea_query::{Alias, Cond, Query}, EntityTrait, JoinType, Order, QueryFilter, Set},serde_json::json, TardisFuns, TardisFunsInst};
 
-use crate::{domain::{flow_state, flow_transition}, dto::{flow_model_dto::FlowModelDetailResp, flow_transition_dto::{FlowTransitionActionChangeKind, FlowTransitionAddReq, FlowTransitionDetailResp, FlowTransitionModifyReq}}};
+use crate::{domain::{flow_state, flow_transition}, dto::flow_transition_dto::{FlowTransitionActionChangeKind, FlowTransitionAddReq, FlowTransitionDetailResp, FlowTransitionModifyReq}};
 
 use super::{flow_rel_serv::{FlowRelKind, FlowRelServ}, flow_state_serv::FlowStateServ};
 
 pub struct FlowTransitionServ;
 
 impl FlowTransitionServ {
-    pub async fn add_transitions(flow_version_id: &str, add_req: &[FlowTransitionAddReq], funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<()> {
+    pub async fn add_transitions(flow_version_id: &str, from_flow_state_id: &str, add_req: &[FlowTransitionAddReq], funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<()> {
         let flow_state_ids =
             FlowRelServ::find_from_simple_rels(&FlowRelKind::FlowModelState, flow_version_id, None, None, funs, ctx).await?.iter().map(|rel| rel.rel_id.clone()).collect::<Vec<_>>();
-        if add_req.iter().any(|req| !flow_state_ids.contains(&req.from_flow_state_id) || !flow_state_ids.contains(&req.to_flow_state_id)) {
+        if add_req.iter().any(|req| !flow_state_ids.contains(&from_flow_state_id.to_string()) || !flow_state_ids.contains(&req.to_flow_state_id)) {
             return Err(funs.err().not_found(
                 "flow_transition",
                 "add_transitions",
@@ -26,7 +26,7 @@ impl FlowTransitionServ {
                 id: Set(TardisFuns::field.nanoid()),
                 name: Set(req.name.as_ref().map(|name| name.to_string()).unwrap_or("".to_string())),
 
-                from_flow_state_id: Set(req.from_flow_state_id.to_string()),
+                from_flow_state_id: Set(from_flow_state_id.to_string()),
                 to_flow_state_id: Set(req.to_flow_state_id.to_string()),
 
                 transfer_by_auto: Set(req.transfer_by_auto.unwrap_or(false)),
@@ -60,7 +60,6 @@ impl FlowTransitionServ {
     pub async fn modify_transitions(
         flow_version_id: &str,
         modify_req: &[FlowTransitionModifyReq],
-        model_detail: &FlowModelDetailResp,
         funs: &TardisFunsInst,
         ctx: &TardisContext,
     ) -> TardisResult<()> {
@@ -113,7 +112,7 @@ impl FlowTransitionServ {
                 "404-flow-transition-rel-model-not-legal",
             ));
         }
-        let model_transitions = model_detail.transitions();
+        let model_transitions = Self::find_transitions(flow_version_id, None, funs, ctx).await?;
         for req in modify_req {
             let transiton = model_transitions.iter().find(|trans| trans.id == req.id.to_string());
             if transiton.is_none() {

@@ -45,9 +45,7 @@ use super::{
     clients::{
         flow_log_client::{FlowLogClient, LogParamContent, LogParamTag},
         search_client::FlowSearchClient,
-    },
-    flow_inst_serv::FlowInstServ,
-    flow_rel_serv::{FlowRelKind, FlowRelServ},
+    }, flow_inst_serv::FlowInstServ, flow_model_version_serv::FlowModelVersionServ, flow_rel_serv::{FlowRelKind, FlowRelServ}
 };
 
 pub struct FlowModelServ;
@@ -78,16 +76,22 @@ impl RbumItemCrudOperation<flow_model::ActiveModel, FlowModelAddReq, FlowModelMo
     async fn package_ext_add(id: &str, add_req: &FlowModelAddReq, _: &TardisFunsInst, _ctx: &TardisContext) -> TardisResult<flow_model::ActiveModel> {
         Ok(flow_model::ActiveModel {
             id: Set(id.to_string()),
-            icon: Set(add_req.icon.as_ref().unwrap_or(&"".to_string()).to_string()),
-            info: Set(add_req.info.as_ref().unwrap_or(&"".to_string()).to_string()),
+            icon: Set(add_req.icon.clone().unwrap_or_default()),
+            info: Set(add_req.info.clone().unwrap_or_default()),
+            current_version_id: Set(add_req.current_version_id.clone().unwrap_or_default()),
             tag: Set(add_req.tag.clone()),
-            rel_model_id: Set(add_req.rel_model_id.as_ref().unwrap_or(&"".to_string()).to_string()),
+            rel_model_id: Set(add_req.rel_model_id.clone().unwrap_or_default()),
             template: Set(add_req.template),
             ..Default::default()
         })
     }
 
-    async fn before_add_item(_add_req: &mut FlowModelAddReq, _funs: &TardisFunsInst, _ctx: &TardisContext) -> TardisResult<()> {
+    async fn before_add_item(add_req: &mut FlowModelAddReq, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<()> {
+        if let Some(mut add_version) = add_req.add_version.clone() {
+            let version_id= FlowModelVersionServ::add_item(&mut add_version, funs, ctx).await?;
+            FlowModelVersionServ::enable_version(&version_id, funs, ctx).await?;
+            add_req.current_version_id = Some(version_id);
+        }
         Ok(())
     }
 
@@ -168,7 +172,7 @@ impl RbumItemCrudOperation<flow_model::ActiveModel, FlowModelAddReq, FlowModelMo
     }
 
     async fn package_ext_modify(id: &str, modify_req: &FlowModelModifyReq, _: &TardisFunsInst, _: &TardisContext) -> TardisResult<Option<flow_model::ActiveModel>> {
-        if modify_req.icon.is_none() && modify_req.info.is_none() && modify_req.init_state_id.is_none() && modify_req.tag.is_none() && modify_req.rel_model_id.is_none() {
+        if modify_req.icon.is_none() && modify_req.info.is_none() && modify_req.tag.is_none() && modify_req.rel_model_id.is_none() {
             return Ok(None);
         }
         let mut flow_model = flow_model::ActiveModel {
@@ -180,9 +184,6 @@ impl RbumItemCrudOperation<flow_model::ActiveModel, FlowModelAddReq, FlowModelMo
         }
         if let Some(info) = &modify_req.info {
             flow_model.info = Set(info.to_string());
-        }
-        if let Some(init_state_id) = &modify_req.init_state_id {
-            flow_model.init_state_id = Set(init_state_id.to_string());
         }
         if let Some(tag) = &modify_req.tag {
             flow_model.tag = Set(Some(tag.clone()));
@@ -1037,37 +1038,6 @@ impl FlowModelServ {
         Self::delete_transitions(flow_model_id, &trans_ids, funs, ctx).await?;
 
         FlowRelServ::delete_simple_rel(&FlowRelKind::FlowModelState, flow_model_id, state_id, funs, ctx).await
-    }
-
-    pub async fn modify_rel_state_ext(flow_model_id: &str, modify_req: &FlowStateRelModelModifyReq, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<()> {
-        let mut ext = TardisFuns::json.str_to_obj::<FlowStateRelModelExt>(
-            &FlowRelServ::find_simple_rels(&FlowRelKind::FlowModelState, Some(flow_model_id), Some(modify_req.id.as_str()), true, None, None, funs, ctx)
-                .await?
-                .pop()
-                .ok_or_else(|| funs.err().internal_error("flow_model_serv", "modify_rel_state", "rel not found", "404-rel-not-found"))?
-                .ext,
-        )?;
-        if let Some(sort) = modify_req.sort {
-            ext.sort = sort;
-        }
-        if let Some(show_btns) = modify_req.show_btns.clone() {
-            ext.show_btns = Some(show_btns);
-        }
-        FlowRelServ::modify_simple_rel(
-            &FlowRelKind::FlowModelState,
-            flow_model_id,
-            &modify_req.id,
-            &mut RbumRelModifyReq {
-                tag: None,
-                note: None,
-                ext: Some(json!(ext).to_string()),
-            },
-            funs,
-            ctx,
-        )
-        .await?;
-
-        Ok(())
     }
 
     async fn find_transitions_by_state_id(
