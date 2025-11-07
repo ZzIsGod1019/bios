@@ -220,196 +220,18 @@ impl FlowSubDeployServ {
             };
             let orginal_models = FlowModelServ::find_rel_models(import_model.rel_template_ids.clone().pop(), true, Some(vec![import_model.tag.clone()]), funs, ctx).await?;
             let mut add_req = import_model.create_add_req();
-            FlowModelServ::add_item(&mut add_req, funs, &mock_ctx).await?;
+            let new_model_id = FlowModelServ::add_item(&mut add_req, funs, &mock_ctx).await?;
+            // update instances state
+            if let Some(switch_state_logs) = import_req.switch_state_logs.get(&new_model_id).cloned() {
+                Self::modify_inst_state(&new_model, switch_state_logs, funs, &mock_ctx).await?;
+            }
             for orginal_model in &orginal_models {
                 let mock_ctx = TardisContext {
                     own_paths: orginal_model.own_paths.clone(),
                     ..Default::default()
                 };
+                Self::modify_inst_rel_model_version(&orginal_model.rel_flow_version_id, &new_model.rel_flow_version_id, funs, &mock_ctx).await?;
                 FlowModelServ::delete_item(&orginal_model.id, funs, &mock_ctx).await?;
-            }
-        }
-        for new_model in import_req.models {
-            let mock_ctx = TardisContext {
-                own_paths: new_model.own_paths.clone(),
-                owner: new_model.owner.clone(),
-                ..Default::default()
-            };
-            if let Ok(original_model) = FlowModelServ::get_item(
-                &new_model.id,
-                &FlowModelFilterReq {
-                    basic: RbumBasicFilterReq {
-                        own_paths: Some("".to_string()),
-                        with_sub_own_paths: true,
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                },
-                funs,
-                &mock_ctx,
-            )
-            .await
-            {
-                let original_model_states = original_model.states();
-                let new_model_states = new_model.states();
-                // update bind states
-                let bind_states = new_model_states.iter().filter(|new_state| !original_model_states.iter().any(|original_state| original_state.id == new_state.id)).collect_vec();
-                for bind_state in bind_states.iter() {
-                    FlowModelServ::modify_model(
-                        &original_model.id,
-                        &mut FlowModelModifyReq {
-                            modify_version: Some(FlowModelVersionModifyReq {
-                                bind_states: Some(vec![FlowModelVersionBindState {
-                                    exist_state: Some(FlowModelBindStateReq {
-                                        state_id: bind_state.id.clone(),
-                                        ext: bind_state.ext.clone(),
-                                    }),
-                                    ..Default::default()
-                                }]),
-                                ..Default::default()
-                            }),
-                            ..Default::default()
-                        },
-                        funs,
-                        &mock_ctx,
-                    )
-                    .await?;
-                }
-                for bind_state in bind_states {
-                    let add_transitions = bind_state
-                        .transitions
-                        .clone()
-                        .into_iter()
-                        .map(|transition| {
-                            let transition_id = transition.id.clone();
-                            let mut add_req = FlowTransitionAddReq::from(transition);
-                            add_req.id = Some(transition_id);
-                            add_req
-                        })
-                        .collect_vec();
-                    FlowTransitionServ::add_transitions(&original_model.current_version_id, &bind_state.id, &add_transitions, funs, ctx).await?;
-                }
-                // update instances state
-                if let Some(switch_state_logs) = import_req.switch_state_logs.get(&original_model.id).cloned() {
-                    Self::modify_inst_state(&original_model, switch_state_logs, funs, &mock_ctx).await?;
-                }
-                // update unbind states
-                let unbind_states = original_model_states.iter().filter(|original_state| !new_model_states.iter().any(|new_state| new_state.id == original_state.id)).collect_vec();
-                for unbind_state in unbind_states {
-                    FlowModelServ::modify_model(
-                        &original_model.id,
-                        &mut FlowModelModifyReq {
-                            modify_version: Some(FlowModelVersionModifyReq {
-                                unbind_states: Some(vec![FlowModelUnbindStateReq {
-                                    state_id: unbind_state.id.clone(),
-                                    new_state_id: None,
-                                }]),
-                                ..Default::default()
-                            }),
-                            ..Default::default()
-                        },
-                        funs,
-                        &mock_ctx,
-                    )
-                    .await?;
-                }
-
-                // modify exists states
-                let exist_states = new_model_states.iter().filter(|new_state| original_model_states.iter().any(|original_state| new_state.id == original_state.id)).collect_vec();
-                let modify_states_req = exist_states
-                    .iter()
-                    .map(|exist_state| FlowModelVersionModifyState {
-                        id: Some(exist_state.id.clone()),
-                        modify_rel: Some(FlowStateRelModelModifyReq {
-                            id: exist_state.id.clone(),
-                            sort: Some(exist_state.ext.sort),
-                            show_btns: exist_state.ext.show_btns.clone(),
-                            is_edit: None,
-                        }),
-                        ..Default::default()
-                    })
-                    .collect_vec();
-                FlowModelServ::modify_model(
-                    &original_model.id,
-                    &mut FlowModelModifyReq {
-                        modify_version: Some(FlowModelVersionModifyReq {
-                            modify_states: Some(modify_states_req),
-                            ..Default::default()
-                        }),
-                        ..Default::default()
-                    },
-                    funs,
-                    &mock_ctx,
-                )
-                .await?;
-                // add or modify transitions
-                let original_transitions = FlowModelServ::get_item(
-                    &new_model.id,
-                    &FlowModelFilterReq {
-                        basic: RbumBasicFilterReq {
-                            own_paths: Some("".to_string()),
-                            with_sub_own_paths: true,
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    },
-                    funs,
-                    &mock_ctx,
-                )
-                .await?
-                .transitions();
-                let mut modify_transitions_req = vec![];
-                for new_transition in new_model.transitions() {
-                    if original_transitions.iter().any(|transition| transition.id == new_transition.id) {
-                        let modify_transition = FlowTransitionModifyReq {
-                            id: TrimString(new_transition.id.clone()),
-                            name: Some(TrimString(new_transition.name.clone())),
-                            from_flow_state_id: Some(new_transition.from_flow_state_id.clone()),
-                            to_flow_state_id: Some(new_transition.to_flow_state_id.clone()),
-                            transfer_by_auto: Some(new_transition.transfer_by_auto),
-                            transfer_by_timer: Some(new_transition.transfer_by_timer.clone()),
-                            guard_by_creator: Some(new_transition.guard_by_creator),
-                            guard_by_his_operators: Some(new_transition.guard_by_his_operators),
-                            guard_by_assigned: Some(new_transition.guard_by_assigned),
-                            guard_by_spec_account_ids: Some(new_transition.guard_by_spec_account_ids.clone()),
-                            guard_by_spec_role_ids: Some(new_transition.guard_by_spec_role_ids.clone()),
-                            guard_by_spec_org_ids: Some(new_transition.guard_by_spec_org_ids.clone()),
-                            guard_by_other_conds: new_transition.guard_by_other_conds(),
-                            double_check: new_transition.double_check(),
-                            vars_collect: new_transition.vars_collect(),
-                            is_notify: Some(new_transition.is_notify),
-                            is_edit: new_transition.is_edit,
-                            action_by_pre_callback: Some(new_transition.action_by_pre_callback.clone()),
-                            action_by_post_callback: Some(new_transition.action_by_post_callback.clone()),
-                            action_by_post_changes: Some(new_transition.action_by_post_changes()),
-                            action_by_post_var_changes: None,
-                            action_by_post_state_changes: None,
-                            action_by_front_changes: Some(new_transition.action_by_front_changes()),
-                            sort: Some(new_transition.sort),
-                        };
-                        modify_transitions_req.push(modify_transition);
-                    } else {
-                        let transition_id = new_transition.id.clone();
-                        let mut add_req = FlowTransitionAddReq::from(new_transition);
-                        add_req.id = Some(transition_id);
-                        FlowTransitionServ::add_transitions(&original_model.current_version_id, &add_req.from_flow_state_id.clone(), &[add_req], funs, ctx).await?;
-                    }
-                }
-                FlowTransitionServ::modify_transitions(&original_model.current_version_id, &modify_transitions_req, funs, ctx).await?;
-                FlowModelServ::modify_model(
-                    &original_model.id,
-                    &mut FlowModelModifyReq {
-                        name: Some(TrimString(original_model.name.clone())),
-                        front_conds: original_model.front_conds(),
-                        ..Default::default()
-                    },
-                    funs,
-                    &mock_ctx,
-                )
-                .await?;
-            } else {
-                let mut add_req = new_model.create_add_req();
-                FlowModelServ::add_item(&mut add_req, funs, &mock_ctx).await?;
             }
         }
         for inst in import_req.insts {
@@ -422,6 +244,18 @@ impl FlowSubDeployServ {
                 }
             }
         }
+        Ok(())
+    }
+
+    async fn modify_inst_rel_model_version(original_version_id: &str, new_version_id: &str, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<()> {
+        let mut update_statement = Query::update();
+        update_statement.table(flow_inst::Entity);
+        update_statement.value(flow_inst::Column::RelFlowVersionId, new_version_id);
+        update_statement.and_where(Expr::col((flow_inst::Entity, flow_inst::Column::Main)).eq(true));
+        update_statement.and_where(Expr::col((flow_inst::Entity, flow_inst::Column::RelFlowVersionId)).eq(original_version_id));
+
+        funs.db().execute(&update_statement).await?;
+
         Ok(())
     }
 
