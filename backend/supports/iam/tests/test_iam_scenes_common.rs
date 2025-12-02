@@ -15,7 +15,7 @@ use bios_iam::basic::dto::iam_cert_conf_dto::IamCertConfLdapAddOrModifyReq;
 use bios_iam::basic::dto::iam_role_dto::IamRoleBoneResp;
 use bios_iam::basic::dto::iam_set_dto::{IamSetCateAddReq, IamSetItemWithDefaultSetAddReq};
 use bios_iam::basic::dto::iam_tenant_dto::IamTenantAggAddReq;
-use bios_iam::basic::serv::iam_cert_ldap_serv::AccountFieldMap;
+use bios_iam::basic::serv::iam_cert_ldap_serv::{AccountFieldMap, OrgFieldMap};
 use bios_iam::iam_constants::RBUM_SCOPE_LEVEL_TENANT;
 use bios_iam::iam_test_helper::BIOSWebTestClient;
 
@@ -91,16 +91,16 @@ pub async fn test(sysadmin_name: &str, sysadmin_password: &str, client: &mut BIO
                         field_labor_type_remarks: "".to_string(),
                         field_labor_type_map: None,
                     },
-                    // org_unique_id: "ou".to_string(),
-                    // org_field_map: OrgFieldMap {
-                    //     search_base_filter: Some("objectClass=*".to_string()),
-                    //     field_dept_id: "".to_string(),
-                    //     field_dept_name: "".to_string(),
-                    //     field_parent_dept_id: "".to_string(),
-                    //     field_dept_id_remarks: "".to_string(),
-                    //     field_dept_name_remarks: "".to_string(),
-                    //     field_parent_dept_id_remarks: "".to_string(),
-                    // },
+                    org_unique_id: "ou".to_string(),
+                    org_field_map: OrgFieldMap {
+                        search_base_filter: Some("objectClass=*".to_string()),
+                        field_dept_id: "".to_string(),
+                        field_dept_name: "".to_string(),
+                        field_parent_dept_id: "".to_string(),
+                        field_dept_id_remarks: "".to_string(),
+                        field_dept_name_remarks: "".to_string(),
+                        field_parent_dept_id_remarks: "".to_string(),
+                    },
                 }),
             },
         )

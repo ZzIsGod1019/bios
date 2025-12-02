@@ -233,8 +233,8 @@ impl IamCertLdapServ {
                 port: info.port,
                 account_unique_id: info.account_unique_id,
                 account_field_map: info.account_field_map,
-                // org_unique_id: info.org_unique_id,
-                // org_field_map: info.org_field_map,
+                org_unique_id: info.org_unique_id,
+                org_field_map: info.org_field_map,
             })?;
             Ok(Some(result))
         } else {
@@ -256,8 +256,8 @@ impl IamCertLdapServ {
                 port: info.port,
                 account_unique_id: info.account_unique_id,
                 account_field_map: info.account_field_map,
-                // org_unique_id: info.org_unique_id,
-                // org_field_map: info.org_field_map,
+                org_unique_id: info.org_unique_id,
+                org_field_map: info.org_field_map,
             })
         })?
     }
@@ -1562,8 +1562,8 @@ struct IamCertLdapServerAuthInfo {
 
     pub account_unique_id: String,
     pub account_field_map: AccountFieldMap,
-    // pub org_unique_id: String,
-    // pub org_field_map: OrgFieldMap,
+    pub org_unique_id: String,
+    pub org_field_map: OrgFieldMap,
 }
 
 impl From<IamCertConfLdapAddOrModifyReq> for IamCertLdapServerAuthInfo {
@@ -1577,8 +1577,8 @@ impl From<IamCertConfLdapAddOrModifyReq> for IamCertLdapServerAuthInfo {
             base_dn: v.base_dn.to_string(),
             account_unique_id: v.account_unique_id.clone(),
             account_field_map: v.account_field_map,
-            // org_unique_id: v.org_unique_id.clone(),
-            // org_field_map: v.org_field_map,
+            org_unique_id: v.org_unique_id.clone(),
+            org_field_map: v.org_field_map,
         }
     }
 }

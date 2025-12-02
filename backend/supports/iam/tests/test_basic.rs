@@ -2,7 +2,7 @@ use std::env;
 use tardis::basic::field::TrimString;
 
 use bios_iam::basic::dto::iam_cert_conf_dto::IamCertConfLdapAddOrModifyReq;
-use bios_iam::basic::serv::iam_cert_ldap_serv::AccountFieldMap;
+use bios_iam::basic::serv::iam_cert_ldap_serv::{AccountFieldMap, OrgFieldMap};
 use tardis::basic::result::TardisResult;
 use tardis::testcontainers::core::{ExecCommand, WaitFor};
 use tardis::testcontainers::runners::AsyncRunner;
@@ -89,12 +89,14 @@ async fn get_ldap_container() -> TardisResult<ContainerAsync<GenericImage>> {
             .with_container_ready_conditions(vec![WaitFor::millis(5)]),
     );
 
-    env::set_var("TARDIS_FW.LDAP.PORT", port.to_string());
-    env::set_var("TARDIS_FW.LDAP.URL", url);
-    env::set_var("TARDIS_FW.LDAP.BASE_DN", base_dn);
-    env::set_var("TARDIS_FW.LDAP.ADMIN_DN", admin_dn);
-    env::set_var("TARDIS_FW.LDAP.ADMIN_CN", "admin");
-    env::set_var("TARDIS_FW.LDAP.ADMIN_PASSWORD", ADMIN_PASSWORD);
+    unsafe {
+        env::set_var("TARDIS_FW.LDAP.PORT", port.to_string());
+        env::set_var("TARDIS_FW.LDAP.URL", url);
+        env::set_var("TARDIS_FW.LDAP.BASE_DN", base_dn);
+        env::set_var("TARDIS_FW.LDAP.ADMIN_DN", admin_dn);
+        env::set_var("TARDIS_FW.LDAP.ADMIN_CN", "admin");
+        env::set_var("TARDIS_FW.LDAP.ADMIN_PASSWORD", ADMIN_PASSWORD);
+    }
     Ok(ldap_container)
 }
 
@@ -125,15 +127,15 @@ pub fn gen_test_ldap_conf() -> IamCertConfLdapAddOrModifyReq {
             field_labor_type_remarks: "".to_string(),
             field_labor_type_map: None,
         },
-        // org_unique_id: "ou".to_string(),
-        // org_field_map: OrgFieldMap {
-        //     search_base_filter: Some("objectClass=organizationalUnit".to_string()),
-        //     field_dept_id: "ou".to_string(),
-        //     field_dept_name: "ou".to_string(),
-        //     field_parent_dept_id: "".to_string(),
-        //     field_dept_id_remarks: "".to_string(),
-        //     field_dept_name_remarks: "".to_string(),
-        //     field_parent_dept_id_remarks: "".to_string(),
-        // },
+        org_unique_id: "ou".to_string(),
+        org_field_map: OrgFieldMap {
+            search_base_filter: Some("objectClass=organizationalUnit".to_string()),
+            field_dept_id: "ou".to_string(),
+            field_dept_name: "ou".to_string(),
+            field_parent_dept_id: "".to_string(),
+            field_dept_id_remarks: "".to_string(),
+            field_dept_name_remarks: "".to_string(),
+            field_parent_dept_id_remarks: "".to_string(),
+        },
     }
 }

@@ -21,7 +21,7 @@ use bios_iam::basic::dto::iam_cert_conf_dto::{IamCertConfLdapAddOrModifyReq, Iam
 use bios_iam::basic::dto::iam_cert_dto::{IamCertPwdNewReq, IamCertUserPwdModifyReq, IamCertUserPwdRestReq};
 use bios_iam::basic::dto::iam_set_dto::{IamSetCateAddReq, IamSetItemWithDefaultSetAddReq};
 use bios_iam::basic::dto::iam_tenant_dto::{IamTenantAggAddReq, IamTenantBoneResp};
-use bios_iam::basic::serv::iam_cert_ldap_serv::{AccountFieldMap, IamCertLdapServ};
+use bios_iam::basic::serv::iam_cert_ldap_serv::{AccountFieldMap, IamCertLdapServ, OrgFieldMap};
 use bios_iam::console_passport::dto::iam_cp_account_dto::IamCpAccountInfoResp;
 use bios_iam::iam_constants;
 use bios_iam::iam_constants::RBUM_SCOPE_LEVEL_TENANT;
@@ -859,16 +859,16 @@ pub async fn login_by_ldap(client: &mut BIOSWebTestClient) -> TardisResult<()> {
                 field_labor_type_remarks: "".to_string(),
                 field_labor_type_map: None,
             },
-            // org_unique_id: "ou".to_string(),
-            // org_field_map: OrgFieldMap {
-            //     search_base_filter: Some("objectClass=*".to_string()),
-            //     field_dept_id: "".to_string(),
-            //     field_dept_name: "".to_string(),
-            //     field_parent_dept_id: "".to_string(),
-            //     field_dept_id_remarks: "".to_string(),
-            //     field_dept_name_remarks: "".to_string(),
-            //     field_parent_dept_id_remarks: "".to_string(),
-            // },
+            org_unique_id: "ou".to_string(),
+            org_field_map: OrgFieldMap {
+                search_base_filter: Some("objectClass=*".to_string()),
+                field_dept_id: "".to_string(),
+                field_dept_name: "".to_string(),
+                field_parent_dept_id: "".to_string(),
+                field_dept_id_remarks: "".to_string(),
+                field_dept_name_remarks: "".to_string(),
+                field_parent_dept_id_remarks: "".to_string(),
+            },
             timeout: None,
         },
         None,
@@ -967,16 +967,16 @@ pub async fn login_by_ldap(client: &mut BIOSWebTestClient) -> TardisResult<()> {
                         field_labor_type_remarks: "".to_string(),
                         field_labor_type_map: None,
                     },
-                    // org_unique_id: "ou".to_string(),
-                    // org_field_map: OrgFieldMap {
-                    //     search_base_filter: Some("objectClass=*".to_string()),
-                    //     field_dept_id: "".to_string(),
-                    //     field_dept_name: "".to_string(),
-                    //     field_parent_dept_id: "".to_string(),
-                    //     field_dept_id_remarks: "".to_string(),
-                    //     field_dept_name_remarks: "".to_string(),
-                    //     field_parent_dept_id_remarks: "".to_string(),
-                    // },
+                    org_unique_id: "ou".to_string(),
+                    org_field_map: OrgFieldMap {
+                        search_base_filter: Some("objectClass=*".to_string()),
+                        field_dept_id: "".to_string(),
+                        field_dept_name: "".to_string(),
+                        field_parent_dept_id: "".to_string(),
+                        field_dept_id_remarks: "".to_string(),
+                        field_dept_name_remarks: "".to_string(),
+                        field_parent_dept_id_remarks: "".to_string(),
+                    },
                     timeout: None,
                 }),
             },
