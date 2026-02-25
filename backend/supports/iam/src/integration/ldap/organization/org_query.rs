@@ -10,7 +10,7 @@ use crate::basic::serv::iam_set_serv::IamSetServ;
 use crate::iam_config::IamLdapConfig;
 use crate::iam_constants;
 use crate::iam_enumeration::IamSetKind;
-use crate::integration::ldap::ldap_parser;
+use crate::integration::ldap::ldap_parser::{self, LdapQueryType};
 use crate::integration::ldap::ldap_query::LdapSqlWhereBuilder;
 use crate::integration::ldap::organization::org_result::LdapOrgFields;
 
@@ -18,6 +18,18 @@ use crate::integration::ldap::organization::org_result::LdapOrgFields;
 pub async fn execute_ldap_org_search(query: &ldap_parser::LdapSearchQuery, config: &IamLdapConfig) -> TardisResult<Vec<LdapOrgFields>> {
     let funs = iam_constants::get_tardis_inst();
     let ctx = TardisContext::default();
+
+    // 处理简单存在性查询（从base DN提取CN）
+    if ldap_parser::is_simple_present_query(query) {
+        if let Some(cn) = ldap_parser::extract_cn_from_base(&query.base) {
+            let mut simple_query = query.clone();
+            simple_query.query_type = LdapQueryType::Equality { attribute: "cn".to_string(), value: cn };
+            let orgs = build_and_execute_org_sql_query(&simple_query, config, &funs, &ctx).await?;
+            return Ok(orgs);
+        } else {
+            return Ok(vec![]);
+        }
+    }
 
     // 使用原生SQL查询方式（参考 account 逻辑）
     let orgs = build_and_execute_org_sql_query(query, config, &funs, &ctx).await?;
@@ -107,8 +119,7 @@ impl LdapSqlWhereBuilder for OrgLdapSqlWhereBuilder {
 
     /// LDAP 属性名 -> 数据库查询字段 映射表 (attr, db_field)
     const ATTR_TO_DB_FIELD: &'static [(&'static str, &'static str)] = &[
-        ("cn", "rbum_set_cate.name"),
-        ("ou", "rbum_set_cate.name"),
+        ("cn", "rbum_set_cate.id"),
         ("name", "rbum_set_cate.name"),
         ("syscode", "rbum_set_cate.sys_code"),
         ("sys_code", "rbum_set_cate.sys_code"),

@@ -70,17 +70,19 @@ fn extract_cn_from_org(org: &LdapOrgFields, base: &str, _config: &IamLdapConfig)
         return cn;
     }
 
-    // 优先使用name，如果没有则使用sys_code
+    // 优先使用id，如果没有则使用name
+    if !org.id.is_empty() {
+        return org.id.clone();
+    }
+
     if !org.name.is_empty() {
         return org.name.clone();
     }
 
-    if !org.sys_code.is_empty() {
-        return org.sys_code.clone();
-    }
+    
 
     // 最后使用ID
-    org.id.clone()
+    org.sys_code.clone()
 }
 
 /// 根据请求的属性列表过滤属性
@@ -103,7 +105,7 @@ fn filter_attributes_by_request(all_attributes: &[LdapPartialAttribute], request
 /// 构建LDAP属性列表
 fn build_ldap_attributes(org: &LdapOrgFields, config: &IamLdapConfig) -> Vec<LdapPartialAttribute> {
     // 使用name作为CN，如果没有则使用sys_code
-    let cn = if !org.name.is_empty() { org.name.clone() } else { org.sys_code.clone() };
+    let cn = org.id.clone();
 
     // 构建属性列表
     let mut attributes = vec![

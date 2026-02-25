@@ -3,7 +3,6 @@
 //! 负责与IAM数据交互，执行账户查询操作
 
 use bios_basic::rbum::serv::rbum_crud_serv::RbumCrudOperation;
-use bios_basic::rbum::serv::rbum_item_serv::RbumItemAttrServ;
 use bios_basic::rbum::serv::rbum_kind_serv::RbumKindAttrServ;
 use tardis::basic::dto::TardisContext;
 use tardis::basic::result::TardisResult;
@@ -69,7 +68,7 @@ pub async fn check_account_exists(ak: &str) -> TardisResult<bool> {
 }
 
 /// 根据CN获取账户详情
-pub async fn get_account_by_cn(ak: &str) -> TardisResult<Option<IamAccountDetailAggResp>> {
+async fn get_account_by_cn(ak: &str) -> TardisResult<Option<IamAccountDetailAggResp>> {
     let funs = iam_constants::get_tardis_inst();
     let rbum_cert_conf_id = IamCertServ::get_cert_conf_id_by_kind(&IamCertKernelKind::UserPwd.to_string(), Some("".to_string()), &funs).await?;
 
@@ -127,9 +126,9 @@ async fn build_and_execute_sql_query(
         ("AND", build_sql_where_clause(&query.query_type, config)?)
     };
     // 构建完整的SQL查询语句
-    let user_pwd_conf_id = IamCertServ::get_cert_conf_id_by_kind(&IamCertKernelKind::UserPwd.to_string(), Some("".to_string()), &funs).await?;
-    let mail_vcode_conf_id = IamCertServ::get_cert_conf_id_by_kind(&IamCertKernelKind::MailVCode.to_string(), Some("".to_string()), &funs).await?;
-    let phone_vcode_conf_id = IamCertServ::get_cert_conf_id_by_kind(&IamCertKernelKind::PhoneVCode.to_string(), Some("".to_string()), &funs).await?;
+    let user_pwd_conf_id = IamCertServ::get_cert_conf_id_by_kind(&IamCertKernelKind::UserPwd.to_string(), Some("".to_string()), funs).await?;
+    let mail_vcode_conf_id = IamCertServ::get_cert_conf_id_by_kind(&IamCertKernelKind::MailVCode.to_string(), Some("".to_string()), funs).await?;
+    let phone_vcode_conf_id = IamCertServ::get_cert_conf_id_by_kind(&IamCertKernelKind::PhoneVCode.to_string(), Some("".to_string()), funs).await?;
     let rbum_item_attr_kind_id = RbumKindAttrServ::find_one_rbum(
         &RbumKindAttrFilterReq {
             basic: RbumBasicFilterReq {
@@ -217,7 +216,7 @@ impl LdapSqlWhereBuilder for AccountLdapSqlWhereBuilder {
 
     /// LDAP 属性名 -> 数据库查询字段 映射表 (attr, db_field)
     const ATTR_TO_DB_FIELD: &'static [(&'static str, &'static str)] = &[
-        ("cn", "user_pwd_cert.ak"),
+        ("cn", "phone_vcode_cert.ak"),
         ("uid", "user_pwd_cert.ak"),
         ("samaccountname", "user_pwd_cert.ak"),
         ("mail", "mail_vcode_cert.ak"),
