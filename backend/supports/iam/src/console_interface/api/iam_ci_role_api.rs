@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::basic::dto::iam_filer_dto::IamRoleFilterReq;
 use crate::basic::dto::iam_role_dto::{IamRoleRelAccountCertResp, IamRoleSummaryResp};
 use crate::basic::serv::iam_account_serv::IamAccountServ;
@@ -368,7 +370,7 @@ impl IamCiRoleApi {
         let mut result = HashMap::new();
         let ids: Vec<_> = ids.0.split(',').collect();
         for id in ids {
-            result.insert(id, IamRoleServ::get_embed_sub_role_id(&id, &funs, &ctx.0).await?);
+            result.insert(id.to_string(), IamRoleServ::get_embed_sub_role_id(&id, &funs, &ctx.0).await?);
         }
         ctx.0.execute_task().await?;
         TardisResp::ok(result)
