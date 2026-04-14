@@ -358,4 +358,19 @@ impl IamCiRoleApi {
         IamRoleServ::refresh_role_cache(&funs, &ctx.0).await?;
         TardisResp::ok(Void {})
     }
+
+    /// Get Embed Subrole Id
+    /// 获取嵌套子角色ID
+    #[oai(path = "/get_embed_subrole_id", method = "get")]
+    async fn get_embed_subrole_id(&self, ids: Query<String>, ctx: TardisContextExtractor, request: &Request) -> TardisApiResult<HashMap<String, String>> {
+        try_set_real_ip_from_req_to_ctx(request, &ctx.0).await?;
+        let funs = iam_constants::get_tardis_inst();
+        let mut result = HashMap::new();
+        let ids: Vec<_> = ids.0.split(',').collect();
+        for id in ids {
+            result.insert(id, IamRoleServ::get_embed_sub_role_id(&id, &funs, &ctx.0).await?);
+        }
+        ctx.0.execute_task().await?;
+        TardisResp::ok(result)
+    }
 }
