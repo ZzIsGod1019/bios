@@ -24,6 +24,7 @@ use tardis::web::context_extractor::TardisContextExtractor;
 use tardis::web::poem::Request;
 use tardis::web::poem_openapi;
 use tardis::web::poem_openapi::param::{Path, Query};
+use tardis::web::poem_openapi::payload::Json;
 use tardis::web::web_resp::{TardisApiResult, TardisPage, TardisResp, Void};
 
 #[derive(Clone, Default)]
@@ -373,6 +374,28 @@ impl IamCiRoleApi {
             result.insert(id.to_string(), IamRoleServ::get_embed_sub_role_id(&id, &funs, &ctx.0).await?);
         }
         ctx.0.execute_task().await?;
+        TardisResp::ok(result)
+    }
+
+    /// Batch get embed sub role ids by own paths
+    ///
+    /// 按 own_path 批量获取嵌套子角色 ID（key：own_path，value：子角色 ID）
+    #[oai(path = "/:id/batch/embed_sub_role", method = "post")]
+    async fn batch_get_embed_sub_role_by_own_paths(
+        &self,
+        id: Path<String>,
+        own_paths: Json<Vec<String>>,
+        mut ctx: TardisContextExtractor,
+        request: &Request,
+    ) -> TardisApiResult<HashMap<String, String>> {
+        let funs = iam_constants::get_tardis_inst();
+        check_without_owner_and_unsafe_fill_ctx(request, &funs, &mut ctx.0)?;
+        try_set_real_ip_from_req_to_ctx(request, &ctx.0).await?;
+        let mut result = HashMap::new();
+        for own_path in own_paths.0 {
+            let embed_sub_role_id = IamRoleServ::get_embed_sub_role_id(&id.0, &funs, &ctx.0).await?;
+            result.insert(own_path, embed_sub_role_id);
+        }
         TardisResp::ok(result)
     }
 }

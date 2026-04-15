@@ -25,7 +25,7 @@ use crate::{
         flow_state_dto::FlowGuardConf,
     },
     flow_constants,
-    serv::{flow_inst_serv::FlowInstServ, flow_model_serv::FlowModelServ},
+    serv::{clients::iam_client::FlowIamClient, flow_inst_serv::FlowInstServ, flow_model_serv::FlowModelServ},
 };
 
 const SEARCH_MODEL_TAG: &str = "flow_model";
@@ -877,12 +877,13 @@ impl FlowSearchClient {
             });
         }
         if !guard_conf.guard_by_spec_role_ids.is_empty() {
+            let mut role_ids = FlowIamClient::get_embed_subrole_id(&guard_conf.guard_by_spec_role_ids, funs, ctx).await?.into_values().collect_vec();
+            role_ids.extend(guard_conf.guard_by_spec_role_ids.clone());
             adv_query.push(AdvSearchItemQueryReq {
                 group_by_or: Some(true),
                 ext_by_or: Some(true),
                 ext: Some(
-                    guard_conf
-                        .guard_by_spec_role_ids
+                    role_ids
                         .clone()
                         .into_iter()
                         .map(|role_id| BasicQueryCondInfo {

@@ -64,5 +64,6 @@ impl_tardis_api_client! {
     {find_all_app_ctx, get ["/ci/app/all/ctx"] Vec<String>}
     {get_account, get ["/ct/account", id] {tenant_id} IamAccountDetailAggResp}
     {batch_decode_cert, post ["/ci/cert/decode"] IamCertDecodeRequest => HashMap<String, String>}
-    {get_embed_subrole_id, get ["/ci/account/get_embed_subrole_id"] {ids} HashMap<String, String>}
+    {get_embed_subrole_id, get ["/ci/role/get_embed_subrole_id"] {ids} HashMap<String, String>}
+    {batch_get_embed_sub_role_by_own_paths, post ["/ci/role", id, "/batch/embed_sub_role"] Vec<String> => HashMap<String, String>}
 }
