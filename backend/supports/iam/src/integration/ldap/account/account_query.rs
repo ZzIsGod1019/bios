@@ -224,20 +224,33 @@ impl LdapSqlWhereBuilder for AccountLdapSqlWhereBuilder {
         ("samaccountname", "user_pwd_cert.ak"),
         ("mail", "mail_vcode_cert.ak"),
         ("employeenumber", "iam_account.employee_code"),
+        ("employeetype", "iam_account.labor_type"),
         ("displayname", "rbum_item.name"),
         ("givenname", "rbum_item.name"),
         ("sn", "rbum_item.name"),
+        ("title", "rbum_ext.value"),
+        ("businesscategory", "iam_account.labor_type"),
+        ("mobile", "phone_vcode_cert.ak"),
+        ("hassubordinates", "iam_account.id"),
         ("memberOf", "third_party_app.id"),
     ];
 
     /// memberOf 过滤器中的值与 LDAP 返回一致，为应用条目的完整 DN（`cn=<id>,ou=...`），需解析出 CN 再与 `third_party_app.id` 比较。
-    fn build_equality_where_clause(attribute: &str, value: &str) -> TardisResult<String> {
+    fn build_equality_where_clause(attribute: &str, value: &str, config: &IamLdapConfig) -> TardisResult<String> {
         if Self::is_object_class(attribute) {
             if Self::is_valid_object_class_value(value) {
                 return Ok("1=1".to_string());
             } else {
                 return Ok("1=0".to_string());
             }
+        }
+        // 账号条目 ou 固定为 config.ou_staff（与 account_result 一致）
+        if attribute.eq_ignore_ascii_case("ou") {
+            return Ok(if value.eq_ignore_ascii_case(&config.ou_staff) {
+                "1=1".to_string()
+            } else {
+                "1=0".to_string()
+            });
         }
         let value_for_sql = if attribute.eq_ignore_ascii_case("memberOf") {
             ldap_parser::extract_cn_from_dn(value).filter(|s| !s.is_empty()).unwrap_or_else(|| value.to_string())
@@ -247,5 +260,24 @@ impl LdapSqlWhereBuilder for AccountLdapSqlWhereBuilder {
         let escaped_value = value_for_sql.replace("'", "''");
         let field = Self::get_db_field(attribute)?;
         Ok(format!("{} = '{}'", field, escaped_value))
+    }
+
+    /// JumpServer 等常组合 (objectClass=*) 与 (ou=*)、(employeeType=*) 等
+    fn build_present_where_clause(attribute: &str, config: &IamLdapConfig) -> TardisResult<String> {
+        if Self::is_object_class(attribute) {
+            return Ok("1=1".to_string());
+        }
+        if attribute.eq_ignore_ascii_case("ou") {
+            return Ok(if config.ou_staff.is_empty() {
+                "1=0".to_string()
+            } else {
+                "1=1".to_string()
+            });
+        }
+        if attribute.eq_ignore_ascii_case("hasSubordinates") {
+            return Ok("1=1".to_string());
+        }
+        let field = Self::get_db_field(attribute)?;
+        Ok(format!("{} IS NOT NULL AND {} != ''", field, field))
     }
 }

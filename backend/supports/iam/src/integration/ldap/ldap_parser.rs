@@ -180,9 +180,14 @@ pub fn is_equality_query(query: &LdapSearchQuery) -> bool {
     matches!(query.query_type, LdapQueryType::Equality { .. })
 }
 
-/// 检查是否为全量查询
+/// LDAP 属性名不区分大小写；客户端常发送 `objectclass` 而非 `objectClass`
+pub fn is_object_class_attr_name(s: &str) -> bool {
+    s.eq_ignore_ascii_case("objectClass")
+}
+
+/// 检查是否为全量查询（Present objectClass / objectclass，等价于 “任意条目”）
 pub fn is_full_query(query: &LdapSearchQuery) -> bool {
-    matches!(query.query_type, LdapQueryType::Present { attribute: ref attr } if attr == "objectClass")
+    matches!(query.query_type, LdapQueryType::Present { attribute: ref attr } if is_object_class_attr_name(attr))
 }
 
 /// 从base DN中提取OU

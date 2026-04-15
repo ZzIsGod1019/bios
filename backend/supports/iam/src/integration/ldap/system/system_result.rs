@@ -5,7 +5,7 @@
 use ldap3_proto::simple::*;
 
 use crate::iam_config::IamLdapConfig;
-use crate::integration::ldap::ldap_parser::{is_root_dse_query, is_subschema_query, LdapBaseDnLevel, LdapQueryType, LdapSearchQuery};
+use crate::integration::ldap::ldap_parser::{is_object_class_attr_name, LdapBaseDnLevel, LdapQueryType, LdapSearchQuery};
 
 /// 构建LDAP根查询响应
 pub fn build_root_dse_search_response(req: &SearchRequest, query: &LdapSearchQuery, config: &IamLdapConfig) -> Vec<LdapMsg> {
@@ -67,7 +67,7 @@ fn filter_attributes_by_request(all_attributes: &[LdapPartialAttribute], request
 fn build_root_dse_attributes(config: &IamLdapConfig, query: &LdapSearchQuery) -> Vec<LdapPartialAttribute> {
     // 判断是否为 (!(objectClass=*)) 的情况
     if let LdapQueryType::Not { filter } = &query.query_type {
-        if matches!(filter.as_ref(), LdapQueryType::Present { attribute } if attribute == "objectClass") {
+        if matches!(filter.as_ref(), LdapQueryType::Present { attribute } if is_object_class_attr_name(attribute)) {
             return vec![];
         }
     }
@@ -127,7 +127,7 @@ fn build_root_dse_attributes(config: &IamLdapConfig, query: &LdapSearchQuery) ->
 fn build_subschema_attributes(_config: &IamLdapConfig, query: &LdapSearchQuery) -> Vec<LdapPartialAttribute> {
     // 判断是否为 (!(objectClass=subschema)) 的情况
     if let LdapQueryType::Not { filter } = &query.query_type {
-        if matches!(filter.as_ref(), LdapQueryType::Equality { attribute, value } if attribute == "objectClass" && value == "subschema") {
+        if matches!(filter.as_ref(), LdapQueryType::Equality { attribute, value } if is_object_class_attr_name(attribute) && value.eq_ignore_ascii_case("subschema")) {
             return vec![];
         }
     }
