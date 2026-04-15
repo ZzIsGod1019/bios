@@ -25,9 +25,9 @@ pub trait LdapSqlWhereBuilder {
     fn build_sql_where_clause(query_type: &ldap_parser::LdapQueryType, config: &IamLdapConfig) -> TardisResult<String> {
         match query_type {
             ldap_parser::LdapQueryType::Equality { attribute, value } => {
-                Self::build_equality_where_clause(attribute, value)
+                Self::build_equality_where_clause(attribute, value, config)
             }
-            ldap_parser::LdapQueryType::Present { attribute } => Self::build_present_where_clause(attribute),
+            ldap_parser::LdapQueryType::Present { attribute } => Self::build_present_where_clause(attribute, config),
             ldap_parser::LdapQueryType::And { filters } => {
                 let conditions: Vec<String> = filters
                     .iter()
@@ -47,13 +47,13 @@ pub trait LdapSqlWhereBuilder {
                 Ok(format!("NOT ({})", condition))
             }
             ldap_parser::LdapQueryType::Substring { attribute, substrings } => {
-                Self::build_substring_where_clause(attribute, substrings)
+                Self::build_substring_where_clause(attribute, substrings, config)
             }
             ldap_parser::LdapQueryType::GreaterOrEqual { attribute, value } => {
-                Self::build_comparison_where_clause(attribute, value, ">=")
+                Self::build_comparison_where_clause(attribute, value, ">=", config)
             }
             ldap_parser::LdapQueryType::LessOrEqual { attribute, value } => {
-                Self::build_comparison_where_clause(attribute, value, "<=")
+                Self::build_comparison_where_clause(attribute, value, "<=", config)
             }
             ldap_parser::LdapQueryType::ApproxMatch { attribute, value } => {
                 Self::build_substring_where_clause(
@@ -63,6 +63,7 @@ pub trait LdapSqlWhereBuilder {
                         any: vec![value.clone()],
                         final_: None,
                     },
+                    config,
                 )
             }
         }
@@ -99,7 +100,7 @@ pub trait LdapSqlWhereBuilder {
     }
 
     /// 构建精确匹配的 WHERE 条件
-    fn build_equality_where_clause(attribute: &str, value: &str) -> TardisResult<String> {
+    fn build_equality_where_clause(attribute: &str, value: &str, _config: &IamLdapConfig) -> TardisResult<String> {
         if Self::is_object_class(attribute) {
             if Self::is_valid_object_class_value(value) {
                 return Ok("1=1".to_string());
@@ -113,7 +114,7 @@ pub trait LdapSqlWhereBuilder {
     }
 
     /// 构建存在性查询的 WHERE 条件
-    fn build_present_where_clause(attribute: &str) -> TardisResult<String> {
+    fn build_present_where_clause(attribute: &str, _config: &IamLdapConfig) -> TardisResult<String> {
         if Self::is_object_class(attribute) {
             return Ok("1=1".to_string());
         }
@@ -125,6 +126,7 @@ pub trait LdapSqlWhereBuilder {
     fn build_substring_where_clause(
         attribute: &str,
         substrings: &ldap3_proto::proto::LdapSubstringFilter,
+        _config: &IamLdapConfig,
     ) -> TardisResult<String> {
         if Self::is_object_class(attribute) {
             if substrings.initial.is_none() && substrings.any.is_empty() && substrings.final_.is_none() {
@@ -177,7 +179,7 @@ pub trait LdapSqlWhereBuilder {
     }
 
     /// 构建比较查询的 WHERE 条件（仅支持 employeenumber 等可比较字段）
-    fn build_comparison_where_clause(attribute: &str, value: &str, operator: &str) -> TardisResult<String> {
+    fn build_comparison_where_clause(attribute: &str, value: &str, operator: &str, _config: &IamLdapConfig) -> TardisResult<String> {
         if Self::is_object_class(attribute) {
             return Err(tardis::basic::error::TardisError::format_error(
                 "objectClass does not support comparison operations",
