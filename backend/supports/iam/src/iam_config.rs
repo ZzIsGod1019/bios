@@ -12,6 +12,8 @@ use tardis::TardisFunsInst;
 use bios_basic::rbum::rbum_config::RbumConfig;
 use tardis::web::poem::http::HeaderName;
 
+use crate::iam_constants;
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(default)]
 pub struct IamConfig {
@@ -32,6 +34,12 @@ pub struct IamConfig {
     //     is_global<bool>:is global account
     // }
     pub cache_key_account_info_: String,
+    // extra_role_id -> {
+    //     <app_id>: app extend role id,
+    // }
+    pub cache_key_extra_role_info_: String,
+    /// 若授权信息找不到，但是拥有以下角色则可以额外获得授权信息
+    pub extra_role_codes: Vec<String>,
     // role_id -> iam_role
     pub cache_key_role_info_: String,
     pub cache_key_double_auth_info: String,
@@ -195,6 +203,8 @@ impl Default for IamConfig {
             cache_key_account_rel_: "iam:cache:account:rel:".to_string(),
             cache_key_account_info_: "iam:cache:account:info:".to_string(),
             cache_key_role_info_: "iam:cache:role:info:".to_string(),
+            cache_key_extra_role_info_: "iam:cache:extra:role:info:".to_string(),
+            extra_role_codes: vec![iam_constants::RBUM_ITEM_NAME_APP_READ_ROLE.to_string()],
             // ..:<account_id>
             cache_key_double_auth_info: "iam:cache:double_auth:info:".to_string(),
             cache_key_double_auth_expire_sec: 300,

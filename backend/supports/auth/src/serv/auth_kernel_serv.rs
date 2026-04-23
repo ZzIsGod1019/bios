@@ -242,6 +242,9 @@ async fn get_account_context(token: &str, account_id: &str, app_id: &str, config
     let mut context: TardisContext = if let Some(context) = cache_client.hget(&format!("{}{}", config.cache_key_account_info, account_id), app_id).await? {
         TardisFuns::json.str_to_obj::<TardisContext>(&context)?
     } else {
+        if let Some(global_context) = get_global_context_with_extra_roles(account_id, app_id, config, cache_client).await? {
+            return Ok(global_context);
+        }
         return Err(TardisError::unauthorized(
             &format!("[Auth] Token [{token}] with App [{app_id}] is not legal"),
             "401-auth-req-token-or-app-not-exist",
@@ -265,6 +268,33 @@ async fn get_account_context(token: &str, account_id: &str, app_id: &str, config
         }
     }
     Ok(context)
+}
+
+async fn get_global_context_with_extra_roles(
+    account_id: &str,
+    app_id: &str,
+    config: &AuthConfig,
+    cache_client: &TardisCacheClient,
+) -> TardisResult<Option<TardisContext>> {
+    if let Some(global_context_str) = cache_client.hget(&format!("{}{}", config.cache_key_account_info, account_id), "").await? {
+        let mut global_context = TardisFuns::json.str_to_obj::<TardisContext>(&global_context_str)?;
+        if !global_context.roles.is_empty() {
+            let mut extra_roles = vec![];
+            for role_id in &config.extra_role_ids {
+                if global_context.roles.contains(role_id) {
+                    let extra_role_app_id = cache_client.hget(&format!("{}{}", config.cache_key_extra_role_info, role_id), app_id).await?;
+                    if let Some(extra_role_app_id) = extra_role_app_id {
+                        extra_roles.push(extra_role_app_id);
+                    }
+                }
+            }
+            if !extra_roles.is_empty() {
+                global_context.roles.extend(extra_roles);
+                return Ok(Some(global_context));
+            }
+        }
+    }
+    Ok(None)
 }
 
 async fn parsing_base_ak(ak_authorization: &str, req: &AuthReq, config: &AuthConfig, is_webhook: bool) -> TardisResult<(String, String, String)> {
