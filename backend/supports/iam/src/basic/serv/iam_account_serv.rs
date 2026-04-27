@@ -45,6 +45,7 @@ use crate::basic::serv::iam_set_serv::IamSetServ;
 use crate::basic::serv::iam_tenant_serv::IamTenantServ;
 use crate::iam_config::{IamBasicInfoManager, IamConfig};
 use crate::iam_enumeration::{IamAccountLockStateKind, IamAccountStatusKind, IamCertKernelKind, IamRelKind, IamSetKind};
+use crate::integration::ldap::account::account_result::build_account_dn;
 
 use super::clients::iam_log_client::{IamLogClient, LogParamTag};
 use super::clients::iam_search_client::IamSearchClient;
@@ -348,9 +349,10 @@ impl IamAccountServ {
         }
         // 当前逻辑，新增账号时添加add_req.cert_user_name.clone()为ldap的ak
         if let Some(ldap_cert_conf) = IamCertLdapServ::get_cert_conf_by_ctx(funs, ctx).await? {
+            let ldap_config = funs.conf::<IamConfig>().ldap.clone();
             IamCertLdapServ::add_or_modify_cert(
                 &IamCertLdapAddOrModifyReq {
-                    ldap_id: add_req.cert_user_name.clone(),
+                    ldap_id: TrimString(build_account_dn(&add_req.cert_user_name.clone(), &ldap_config)),
                     status: RbumCertStatusKind::Enabled,
                 },
                 &account_id,

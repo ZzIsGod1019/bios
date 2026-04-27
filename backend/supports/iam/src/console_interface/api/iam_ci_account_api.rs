@@ -17,21 +17,26 @@ use tardis::TardisFuns;
 
 use crate::basic::dto::iam_account_dto::{IamAccountAggAddReq, IamAccountAggModifyReq, IamAccountAppInfoResp, IamAccountBindRoleReq, IamAccountDetailAggResp, IamAccountDetailResp, IamAccountOthersIdInitReq, IamAccountSummaryAggResp};
 use crate::basic::dto::iam_app_dto::IamAppKind;
+use crate::basic::dto::iam_cert_dto::IamCertLdapAddOrModifyReq;
 use crate::basic::dto::iam_filer_dto::IamAccountFilterReq;
 use crate::basic::serv::clients::iam_search_client::IamSearchClient;
 use crate::basic::serv::iam_account_serv::IamAccountServ;
 use crate::basic::serv::iam_app_serv::IamAppServ;
+use crate::basic::serv::iam_cert_ldap_serv::IamCertLdapServ;
 use crate::basic::serv::iam_cert_serv::IamCertServ;
 use crate::basic::serv::iam_key_cache_serv::IamIdentCacheServ;
 use crate::basic::serv::iam_role_serv::IamRoleServ;
 use crate::basic::serv::iam_set_serv::IamSetServ;
-use crate::iam_config::IamBasicConfigApi;
+use crate::iam_config::{IamBasicConfigApi, IamConfig};
 use crate::iam_constants::{self, RBUM_SCOPE_LEVEL_APP};
 use crate::iam_enumeration::{IamCertKernelKind, IamRelKind, IamSetKind};
+use crate::integration::ldap::account::account_result::build_account_dn;
 use bios_basic::helper::request_helper::try_set_real_ip_from_req_to_ctx;
+use bios_basic::rbum::rbum_enumeration::RbumCertStatusKind;
 use bios_basic::rbum::serv::rbum_cert_serv::RbumCertServ;
 use bios_basic::rbum::serv::rbum_crud_serv::RbumCrudOperation;
 use bios_basic::rbum::serv::rbum_item_serv::RbumItemCrudOperation;
+use tardis::basic::field::TrimString;
 use tardis::web::poem::Request;
 
 #[derive(Clone, Default)]
@@ -41,6 +46,70 @@ pub struct IamCiAccountApi;
 /// 接口控制台帐户API
 #[poem_openapi::OpenApi(prefix_path = "/ci/account", tag = "bios_basic::ApiTag::Interface")]
 impl IamCiAccountApi {
+    /// [临时脚本] 为指定账号批量生成/更新 LDAP 凭证
+    ///
+    /// 入参为 account_id 列表，返回成功写入的 account_id -> ldap_dn 映射。
+    #[oai(path = "/script/ldap-cert", method = "post")]
+    async fn script_generate_ldap_cert_by_accounts(
+        &self,
+        account_ids: Json<Vec<String>>,
+        mut ctx: TardisContextExtractor,
+        request: &Request,
+    ) -> TardisApiResult<HashMap<String, String>> {
+        let mut funs = iam_constants::get_tardis_inst();
+        check_without_owner_and_unsafe_fill_ctx(request, &funs, &mut ctx.0)?;
+        try_set_real_ip_from_req_to_ctx(request, &ctx.0).await?;
+        funs.begin().await?;
+
+        let ldap_config = funs.conf::<IamConfig>().ldap.clone();
+        let mut generated = HashMap::new();
+        for account_id in account_ids.0 {
+            let account_ctx = match IamAccountServ::is_global_account_context(account_id.as_str(), &funs, &ctx.0).await {
+                Ok(account_ctx) => account_ctx,
+                Err(err) => {
+                    log::warn!("[IAM] script_generate_ldap_cert_by_accounts skip account_id={} reason={:?}", account_id, err);
+                    continue;
+                }
+            };
+
+            let userpwd_cert = match IamCertServ::get_kernel_cert(account_id.as_str(), &IamCertKernelKind::UserPwd, &funs, &account_ctx).await {
+                Ok(cert) => cert,
+                Err(err) => {
+                    log::warn!("[IAM] script_generate_ldap_cert_by_accounts skip account_id={} reason={:?}", account_id, err);
+                    continue;
+                }
+            };
+
+            let Some(ldap_cert_conf) = IamCertLdapServ::get_cert_conf_by_ctx(&funs, &account_ctx).await? else {
+                log::warn!("[IAM] script_generate_ldap_cert_by_accounts skip account_id={} reason=no_ldap_cert_conf", account_id);
+                continue;
+            };
+
+            let ldap_dn = build_account_dn(userpwd_cert.ak.as_str(), &ldap_config);
+            if let Err(err) = IamCertLdapServ::add_or_modify_cert(
+                &IamCertLdapAddOrModifyReq {
+                    ldap_id: TrimString(ldap_dn.clone()),
+                    status: RbumCertStatusKind::Enabled,
+                },
+                account_id.as_str(),
+                ldap_cert_conf.id.as_str(),
+                &funs,
+                &account_ctx,
+            )
+            .await
+            {
+                log::warn!("[IAM] script_generate_ldap_cert_by_accounts skip account_id={} reason={:?}", account_id, err);
+                continue;
+            }
+
+            generated.insert(account_id, ldap_dn);
+        }
+
+        funs.commit().await?;
+        ctx.0.execute_task().await?;
+        TardisResp::ok(generated)
+    }
+
     /// Add Account
     /// 添加帐户
     #[oai(path = "/", method = "post")]
