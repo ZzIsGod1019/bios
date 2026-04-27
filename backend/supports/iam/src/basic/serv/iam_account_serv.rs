@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use bios_basic::helper::request_helper::get_real_ip_from_ctx;
 use bios_basic::rbum::rbum_config::RbumConfigApi;
-use bios_basic::rbum::rbum_enumeration::RbumRelFromKind;
+use bios_basic::rbum::rbum_enumeration::{RbumCertStatusKind, RbumRelFromKind};
 
 use itertools::Itertools;
 use tardis::chrono::Utc;
@@ -29,10 +29,11 @@ use crate::basic::dto::iam_account_dto::{
     AccountTenantInfo, AccountTenantInfoResp, IamAccountAddReq, IamAccountAggAddReq, IamAccountAggModifyReq, IamAccountAppInfoResp, IamAccountAttrResp, IamAccountDetailAggResp,
     IamAccountDetailResp, IamAccountModifyReq, IamAccountSelfModifyReq, IamAccountSummaryAggResp, IamAccountSummaryResp,
 };
-use crate::basic::dto::iam_cert_dto::{IamCertMailVCodeAddReq, IamCertPhoneVCodeAddReq, IamCertUserPwdAddReq};
+use crate::basic::dto::iam_cert_dto::{IamCertLdapAddOrModifyReq, IamCertMailVCodeAddReq, IamCertPhoneVCodeAddReq, IamCertUserPwdAddReq};
 use crate::basic::dto::iam_filer_dto::{IamAccountFilterReq, IamAppFilterReq, IamRoleFilterReq, IamTenantFilterReq};
 use crate::basic::dto::iam_set_dto::IamSetItemAddReq;
 use crate::basic::serv::iam_attr_serv::IamAttrServ;
+use crate::basic::serv::iam_cert_ldap_serv::IamCertLdapServ;
 use crate::basic::serv::iam_cert_mail_vcode_serv::IamCertMailVCodeServ;
 use crate::basic::serv::iam_cert_phone_vcode_serv::IamCertPhoneVCodeServ;
 use crate::basic::serv::iam_cert_serv::IamCertServ;
@@ -340,6 +341,20 @@ impl IamAccountServ {
                 },
                 &account_id,
                 Some(cert_conf.id),
+                funs,
+                ctx,
+            )
+            .await?;
+        }
+        // 当前逻辑，新增账号时添加add_req.cert_user_name.clone()为ldap的ak
+        if let Some(ldap_cert_conf) = IamCertLdapServ::get_cert_conf_by_ctx(funs, ctx).await? {
+            IamCertLdapServ::add_or_modify_cert(
+                &IamCertLdapAddOrModifyReq {
+                    ldap_id: add_req.cert_user_name.clone(),
+                    status: RbumCertStatusKind::Enabled,
+                },
+                &account_id,
+                &ldap_cert_conf.id,
                 funs,
                 ctx,
             )
