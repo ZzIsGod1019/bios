@@ -437,7 +437,9 @@ impl FlowSearchClient {
                 }
                 if let Some(status) = &req_cp.status {
                     if let Some(ext_mut) = ext.as_object_mut() {
-                        ext_mut.insert("status".to_string(), status.to_json().unwrap_or_default());
+                        if let Some(status_key) = Self::get_search_status_map().get(&req_cp.tag) {
+                            ext_mut.insert(status_key.clone(), status.to_json().unwrap_or_default());
+                        }
                     }
                 }
                 if let Some(rel_state) = &req_cp.rel_state {
