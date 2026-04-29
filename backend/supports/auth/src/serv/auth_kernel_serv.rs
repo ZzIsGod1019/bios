@@ -105,6 +105,7 @@ async fn ident(req: &mut AuthReq, config: &AuthConfig, cache_client: &TardisCach
             groups: Some(context.groups),
             own_paths: Some(context.own_paths),
             ak: Some(context.ak),
+            ident_by_ak_sk: false,
         })
     } else if let Some(ak_authorization) = get_ak_key(req, config) {
         let (req_date, ak, signature) = self::parsing_base_ak(&ak_authorization, req, config, false).await?;
@@ -132,6 +133,7 @@ async fn ident(req: &mut AuthReq, config: &AuthConfig, cache_client: &TardisCach
             groups: None,
             own_paths: Some(own_paths),
             ak: Some(ak.to_string()),
+            ident_by_ak_sk: true,
         })
     } else if let Some(ak_authorization) = get_webhook_ak_key(req, config) {
         let (req_date, ak, signature) = self::parsing_base_ak(&ak_authorization, req, config, true).await?;
@@ -185,6 +187,7 @@ async fn ident(req: &mut AuthReq, config: &AuthConfig, cache_client: &TardisCach
                 groups: Some(context.groups),
                 own_paths: Some(own_paths.to_string()),
                 ak: Some(ak.to_string()),
+                ident_by_ak_sk: true,
             })
         } else {
             Err(TardisError::forbidden(
@@ -213,6 +216,7 @@ async fn ident(req: &mut AuthReq, config: &AuthConfig, cache_client: &TardisCach
             groups: None,
             own_paths: None,
             ak: None,
+            ident_by_ak_sk: false,
         })
     }
 }
@@ -452,6 +456,9 @@ pub async fn do_auth(ctx: &AuthContext) -> TardisResult<Option<ResContainerLeafI
             return Err(TardisError::forbidden("[Auth] Secondary confirmation is required", "401-auth-req-need-double-auth"));
         }
     }
+    if matched_res.need_only_aksk && !ctx.ident_by_ak_sk {
+        return Err(TardisError::forbidden("[Auth] Only AK/SK authentication is allowed", "403-auth-req-permission-denied"));
+    }
     // Check auth
     if let Some(auth) = &matched_res.auth {
         // let now = Utc::now().timestamp();
@@ -511,7 +518,6 @@ pub async fn do_auth(ctx: &AuthContext) -> TardisResult<Option<ResContainerLeafI
     } else {
         return Ok(Some(matched_res));
     }
-
     if ctx.ak.is_some() {
         //have token,not not have permission
         Err(TardisError::forbidden("[Auth] Permission denied", "403-auth-req-permission-denied"))
