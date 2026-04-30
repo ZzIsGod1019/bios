@@ -124,6 +124,11 @@ impl RbumItemCrudOperation<iam_app::ActiveModel, IamAppAddReq, IamAppModifyReq, 
         Self::add_or_modify_app_kv(id, funs, ctx).await?;
         Ok(())
     }
+    async fn after_delete_item(id: &str, _: &Option<IamAppDetailResp>, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<()> {
+        let tenant_ctx = IamCertServ::use_sys_or_tenant_ctx_unsafe(ctx.clone())?;
+        Self::delete_extra_role_cache_by_app_id(id, funs, &tenant_ctx).await?;
+        Ok(())
+    }
 
     async fn before_delete_item(_: &str, funs: &TardisFunsInst, _: &TardisContext) -> TardisResult<Option<IamAppDetailResp>> {
         Err(funs.err().conflict(&Self::get_obj_name(), "delete", "app can only be disabled but not deleted", "409-iam-app-can-not-delete"))
@@ -198,6 +203,7 @@ impl IamAppServ {
         )
         .await?;
         IamRoleServ::add_app_copy_role_agg(&app_id, funs, &app_ctx).await?;
+        Self::add_extra_role_cache_by_app_id(&app_id, funs, &tenant_ctx).await?;
         let app_admin_role_id = IamRoleServ::get_embed_sub_role_id(&funs.iam_basic_role_app_admin_id(), funs, &app_ctx).await?;
         let tenant_app_manager_role_id = IamRoleServ::get_embed_sub_role_id(&funs.iam_basic_role_tenant_app_manager_id(), funs, tenant_ctx).await?;
         // TODO 是否需要在这里初始化应用级别的set？
@@ -420,6 +426,59 @@ impl IamAppServ {
 
     pub async fn find_name_by_ids(filter: IamAppFilterReq, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<Vec<String>> {
         IamAppServ::find_items(&filter, None, None, funs, ctx).await.map(|r| r.into_iter().map(|r| format!("{},{},{}", r.id, r.name, r.icon)).collect())
+    }
+
+    pub async fn init_extra_role_cache_by_app_id(app_id: &str, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<()> {
+        let tenant_ctx = IamCertServ::use_sys_or_tenant_ctx_unsafe(ctx.clone())?;
+        Self::add_extra_role_cache_by_app_id(app_id, funs, &tenant_ctx).await
+    }
+
+    async fn add_extra_role_cache_by_app_id(app_id: &str, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<()> {
+        for extra_role_code in &funs.conf::<IamConfig>().extra_role_codes {
+            let extra_role = IamRoleServ::find_one_item(
+                &crate::basic::dto::iam_filer_dto::IamRoleFilterReq {
+                    basic: RbumBasicFilterReq {
+                        code: Some(extra_role_code.clone()),
+                        with_sub_own_paths: true,
+                        ..Default::default()
+                    },
+                    kind: Some(crate::iam_enumeration::IamRoleKind::App),
+                    ..Default::default()
+                },
+                funs,
+                ctx,
+            )
+            .await?;
+            let Some(extra_role) = extra_role else {
+                continue;
+            };
+            let extra_role_id = extra_role.id;
+            IamIdentCacheServ::add_extra_role_info(&extra_role_id, app_id, &extra_role_id, funs).await?;
+        }
+        Ok(())
+    }
+
+    async fn delete_extra_role_cache_by_app_id(app_id: &str, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<()> {
+        for extra_role_code in &funs.conf::<IamConfig>().extra_role_codes {
+            let extra_role = IamRoleServ::find_one_item(
+                &crate::basic::dto::iam_filer_dto::IamRoleFilterReq {
+                    basic: RbumBasicFilterReq {
+                        code: Some(extra_role_code.clone()),
+                        with_sub_own_paths: true,
+                        ..Default::default()
+                    },
+                    kind: Some(crate::iam_enumeration::IamRoleKind::App),
+                    ..Default::default()
+                },
+                funs,
+                ctx,
+            )
+            .await?;
+            if let Some(extra_role) = extra_role {
+                IamIdentCacheServ::delete_extra_role_info(&extra_role.id, app_id, funs).await?;
+            }
+        }
+        Ok(())
     }
 
     async fn add_or_modify_app_kv(app_id: &str, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<()> {

@@ -773,6 +773,32 @@ impl IamIdentCacheServ {
         }
         Ok(())
     }
+    pub async fn add_extra_role_info(extra_role_id: &str, app_id: &str, app_extend_role_id: &str, funs: &TardisFunsInst) -> TardisResult<()> {
+        log::trace!(
+            "add extra role info: extra_role_id={}, app_id={}, app_extend_role_id={}",
+            extra_role_id,
+            app_id,
+            app_extend_role_id
+        );
+        funs.cache()
+            .hset(
+                format!("{}{}", funs.conf::<IamConfig>().cache_key_extra_role_info_, extra_role_id).as_str(),
+                app_id,
+                app_extend_role_id,
+            )
+            .await?;
+        Ok(())
+    }
+    pub async fn delete_extra_role_info(extra_role_id: &str, app_id: &str, funs: &TardisFunsInst) -> TardisResult<()> {
+        log::trace!("delete extra role info: extra_role_id={}, app_id={}", extra_role_id, app_id);
+        funs.cache()
+            .hdel(
+                format!("{}{}", funs.conf::<IamConfig>().cache_key_extra_role_info_, extra_role_id).as_str(),
+                app_id,
+            )
+            .await?;
+        Ok(())
+    }
 }
 
 pub struct IamResCacheServ;
