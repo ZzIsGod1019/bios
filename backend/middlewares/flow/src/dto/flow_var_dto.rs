@@ -7,6 +7,8 @@ use tardis::{
     web::poem_openapi,
 };
 
+use super::flow_cond_dto::BasicQueryCondInfo;
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, poem_openapi::Object, sea_orm::FromJsonQueryResult)]
 pub struct FlowVarSimpleInfo {
     #[oai(validator(min_length = "2", max_length = "200"))]
@@ -14,6 +16,38 @@ pub struct FlowVarSimpleInfo {
     pub data_type: RbumDataTypeKind,
     pub default_value: Value,
     pub required: bool,
+}
+
+/// 变量展示/隐藏状态
+#[derive(Display, Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize, poem_openapi::Enum, strum::EnumString)]
+pub enum FlowVarVisibilityKind {
+    /// 展示
+    #[default]
+    Show,
+    /// 隐藏
+    Hide,
+}
+
+/// 变量展示/隐藏条件规则
+///
+/// 满足 ``conds`` 条件时，应用 ``visibility`` 指定的展示/隐藏状态
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, poem_openapi::Object, sea_orm::FromJsonQueryResult)]
+pub struct FlowVarVisibilityCondRule {
+    /// 条件列表，外层OR、内层AND
+    pub conds: Vec<Vec<BasicQueryCondInfo>>,
+    /// 满足条件时的展示/隐藏状态
+    pub visibility: FlowVarVisibilityKind,
+}
+
+/// 变量展示/隐藏配置
+///
+/// 描述变量的默认展示或隐藏状态，以及在特定条件下的展示或隐藏状态
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, poem_openapi::Object, sea_orm::FromJsonQueryResult)]
+pub struct FlowVarVisibilityInfo {
+    /// 默认展示/隐藏状态
+    pub default_visibility: FlowVarVisibilityKind,
+    /// 条件规则列表，按顺序匹配，满足条件时应用对应的展示/隐藏状态
+    pub cond_rules: Option<Vec<FlowVarVisibilityCondRule>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, poem_openapi::Object, sea_orm::FromJsonQueryResult)]
@@ -43,6 +77,7 @@ pub struct FlowVarInfo {
     pub ext: Option<String>,
     pub parent_attr_name: Option<String>,
     pub is_edit: Option<bool>,
+    pub visibility: Option<FlowVarVisibilityInfo>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, poem_openapi::Object)]
