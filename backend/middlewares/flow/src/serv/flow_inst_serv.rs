@@ -36,7 +36,7 @@ use crate::{
             FlowStatusAutoStrategyKind, FlowStatusMultiApprovalKind, FlowSysStateKind,
         },
         flow_transition_dto::{FlowTransitionDetailResp, FlowTransitionFilterReq},
-        flow_var_dto::FillType,
+        flow_var_dto::{FillType, FlowVarInfo},
     },
     flow_config::FlowConfig,
     flow_constants,
@@ -1843,7 +1843,26 @@ impl FlowInstServ {
                         find_req.iter().find(|req| req.flow_inst_id == flow_inst.id),
                         rel_flow_version_map.get(&flow_inst.tag).cloned(),
                     ) {
-                        Self::do_find_next_transitions(flow_inst, None, &req.vars, false, funs, ctx).await.ok().map(|resp| FlowInstFindStateAndTransitionsResp {
+                        Self::do_find_next_transitions(flow_inst, None, &req.vars, false, funs, ctx).await.ok().map(|resp| {
+                            let next_flow_transitions = if (unfinished_approve_flow_obj_ids.contains(&flow_inst.rel_business_obj_id)
+                                && flow_inst.artifacts.clone().unwrap_or_default().rel_transition_id.is_none())
+                                || flow_inst.artifacts.clone().unwrap_or_default().state == Some(FlowInstStateKind::Approval)
+                            {
+                                vec![]
+                            } else {
+                                let transitions = if let Some(sys_states) = &req.sys_states {
+                                    resp.next_flow_transitions.into_iter().filter(|tran| sys_states.contains(&tran.next_flow_state_sys_state)).collect_vec()
+                                } else {
+                                    resp.next_flow_transitions
+                                };
+                                if req.visibility_vars.is_some() {
+                                    let check_vars = Self::build_visibility_check_vars(flow_inst, req);
+                                    Self::apply_visibility_to_transitions(transitions, &check_vars)
+                                } else {
+                                    transitions
+                                }
+                            };
+                            FlowInstFindStateAndTransitionsResp {
                             flow_inst_id: resp.flow_inst_id,
                             rel_business_obj_id: flow_inst.rel_business_obj_id.clone(),
                             current_flow_state_name: resp.current_flow_state_name,
@@ -1851,20 +1870,9 @@ impl FlowInstServ {
                             current_flow_state_color: resp.current_flow_state_color,
                             current_flow_state_ext: resp.current_flow_state_ext,
                             finish_time: resp.finish_time,
-                            next_flow_transitions: if (unfinished_approve_flow_obj_ids.contains(&flow_inst.rel_business_obj_id)
-                                && flow_inst.artifacts.clone().unwrap_or_default().rel_transition_id.is_none())
-                                || flow_inst.artifacts.clone().unwrap_or_default().state == Some(FlowInstStateKind::Approval)
-                            {
-                                vec![]
-                            } else {
-                                if let Some(sys_states) = &req.sys_states {
-                                    resp.next_flow_transitions.into_iter().filter(|tran| sys_states.contains(&tran.next_flow_state_sys_state)).collect_vec()
-                                } else {
-                                    resp.next_flow_transitions
-                                }
-                            },
+                            next_flow_transitions,
                             rel_flow_versions,
-                        })
+                        }})
                     } else {
                         None
                     }
@@ -1877,6 +1885,35 @@ impl FlowInstServ {
         .collect_vec();
 
         Ok(state_and_next_transitions)
+    }
+
+    fn build_visibility_check_vars(flow_inst: &FlowInstDetailResp, req: &FlowInstFindStateAndTransitionsReq) -> HashMap<String, Value> {
+        let mut check_vars = HashMap::new();
+        if let Some(current_vars) = &flow_inst.current_vars {
+            check_vars.extend(current_vars.clone());
+        }
+        if let Some(vars) = &req.vars {
+            check_vars.extend(vars.clone());
+        }
+        if let Some(visibility_vars) = &req.visibility_vars {
+            check_vars.extend(visibility_vars.clone());
+        }
+        check_vars
+    }
+
+    fn apply_visibility_to_transitions(
+        transitions: Vec<FlowInstFindNextTransitionResp>,
+        check_vars: &HashMap<String, Value>,
+    ) -> Vec<FlowInstFindNextTransitionResp> {
+        transitions
+            .into_iter()
+            .map(|mut transition| {
+                if let Some(vars_collect) = transition.vars_collect.take() {
+                    transition.vars_collect = Some(FlowVarInfo::filter_by_visibility(vars_collect, check_vars));
+                }
+                transition
+            })
+            .collect()
     }
 
     pub async fn find_next_transitions(

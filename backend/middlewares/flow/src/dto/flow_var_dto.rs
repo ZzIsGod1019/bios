@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
+use std::{collections::HashMap, str::FromStr};
 use strum::Display;
 use tardis::{
     db::sea_orm::{self, DbErr, QueryResult, TryGetError, TryGetable},
@@ -48,6 +48,32 @@ pub struct FlowVarVisibilityInfo {
     pub default_visibility: FlowVarVisibilityKind,
     /// 条件规则列表，按顺序匹配，满足条件时应用对应的展示/隐藏状态
     pub cond_rules: Option<Vec<FlowVarVisibilityCondRule>>,
+}
+
+impl FlowVarVisibilityInfo {
+    /// 根据字段值解析变量的展示/隐藏状态，按顺序匹配条件规则，未命中时使用默认状态
+    pub fn resolve(&self, check_vars: &HashMap<String, Value>) -> FlowVarVisibilityKind {
+        if let Some(cond_rules) = &self.cond_rules {
+            for rule in cond_rules {
+                if BasicQueryCondInfo::check_or_and_conds(&rule.conds, check_vars).unwrap_or(false) {
+                    return rule.visibility.clone();
+                }
+            }
+        }
+        self.default_visibility.clone()
+    }
+}
+
+impl FlowVarInfo {
+    /// 根据 visibility 配置过滤不应展示的变量
+    pub fn filter_by_visibility(vars: Vec<Self>, check_vars: &HashMap<String, Value>) -> Vec<Self> {
+        vars.into_iter()
+            .filter(|var| match &var.visibility {
+                Some(visibility) => visibility.resolve(check_vars) == FlowVarVisibilityKind::Show,
+                None => true,
+            })
+            .collect()
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, poem_openapi::Object, sea_orm::FromJsonQueryResult)]

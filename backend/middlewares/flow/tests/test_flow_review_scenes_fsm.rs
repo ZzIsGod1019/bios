@@ -342,6 +342,7 @@ pub async fn test(
     //             flow_inst_id: review_inst_id.clone(),
     //             vars: None,
     //             sys_states: None,
+    //             visibility_vars: None,
     //         }],
     //     )
     //     .await;
@@ -457,6 +458,7 @@ pub async fn test(
                 flow_inst_id: review_single_inst_id.clone(),
                 vars: None,
                 sys_states: None,
+                visibility_vars: None,
             }],
         )
         .await;
