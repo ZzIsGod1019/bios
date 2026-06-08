@@ -1923,7 +1923,8 @@ impl FlowInstServ {
         .vars_collect();
         if let Some(vars_collect) = vars_collect {
             for var in vars_collect {
-                if var.required == Some(true) && transfer_req.vars.as_ref().is_none_or(|map| !map.contains_key(&var.name)) {
+                // 如果变量是必填且配置了可见规则，且请求中没有该变量，则返回错误
+                if var.required == Some(true) && var.visibility.is_none() && transfer_req.vars.as_ref().is_none_or(|map| !map.contains_key(&var.name)) {
                     return Err(funs.err().internal_error("flow_inst", "check_transfer_vars", "missing required field", "400-flow-inst-vars-field-missing"));
                 }
             }
