@@ -46,18 +46,16 @@ pub struct FlowVarVisibilityCondRule {
 pub struct FlowVarVisibilityInfo {
     /// 默认展示/隐藏状态
     pub default_visibility: FlowVarVisibilityKind,
-    /// 条件规则列表，按顺序匹配，满足条件时应用对应的展示/隐藏状态
-    pub cond_rules: Option<Vec<FlowVarVisibilityCondRule>>,
+    /// 条件规则，满足条件时应用对应的展示/隐藏状态
+    pub cond_rule: Option<FlowVarVisibilityCondRule>,
 }
 
 impl FlowVarVisibilityInfo {
-    /// 根据字段值解析变量的展示/隐藏状态，按顺序匹配条件规则，未命中时使用默认状态
+    /// 根据字段值解析变量的展示/隐藏状态，命中条件规则时使用规则状态，否则使用默认状态
     pub fn resolve(&self, check_vars: &HashMap<String, Value>) -> FlowVarVisibilityKind {
-        if let Some(cond_rules) = &self.cond_rules {
-            for rule in cond_rules {
-                if BasicQueryCondInfo::check_or_and_conds(&rule.conds, check_vars).unwrap_or(false) {
-                    return rule.visibility.clone();
-                }
+        if let Some(cond_rule) = &self.cond_rule {
+            if BasicQueryCondInfo::check_or_and_conds(&cond_rule.conds, check_vars).unwrap_or(false) {
+                return cond_rule.visibility.clone();
             }
         }
         self.default_visibility.clone()
