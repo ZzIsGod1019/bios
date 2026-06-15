@@ -2087,6 +2087,21 @@ impl FlowModelServ {
                             }
                         }
                     }
+                    if let Some(add_transitions) = &mut modify_state.add_transitions {
+                        let add_transitions_cp = add_transitions.clone();
+                        add_transitions.clear();
+                        for add_transition in add_transitions_cp {
+                            if child_model_transitions
+                                .iter()
+                                .find(|child_tran| {
+                                    child_tran.from_flow_state_id == add_transition.from_flow_state_id
+                                        && child_tran.to_flow_state_id == add_transition.to_flow_state_id
+                                }).is_none()
+                            {
+                                add_transitions.push(add_transition);
+                            };
+                        }
+                    }
                 }
             }
         }
