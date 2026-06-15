@@ -13,6 +13,7 @@ use crate::basic::dto::iam_filer_dto::IamPublishSystemFilterReq;
 use crate::basic::dto::iam_publish_system_dto::{
     IamPublishSystemAddReq, IamPublishSystemDetailResp, IamPublishSystemModifyReq, IamPublishSystemSummaryResp,
 };
+use crate::basic::serv::clients::iam_search_client::IamSearchClient;
 use crate::basic::serv::iam_rel_serv::IamRelServ;
 use crate::basic::serv::iam_tenant_serv::IamTenantServ;
 use crate::iam_config::IamBasicInfoManager;
@@ -152,6 +153,21 @@ impl
             model.description = Set(modify_req.description.clone());
         }
         Ok(Some(model))
+    }
+
+    async fn after_add_item(id: &str, _: &mut IamPublishSystemAddReq, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<()> {
+        IamSearchClient::async_add_or_modify_publish_system_search(id, funs, ctx).await?;
+        Ok(())
+    }
+
+    async fn after_modify_item(id: &str, _: &mut IamPublishSystemModifyReq, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<()> {
+        IamSearchClient::async_add_or_modify_publish_system_search(id, funs, ctx).await?;
+        Ok(())
+    }
+
+    async fn after_delete_item(id: &str, _: &Option<IamPublishSystemDetailResp>, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<()> {
+        IamSearchClient::async_delete_publish_system_search(id.to_string(), funs, ctx.clone()).await?;
+        Ok(())
     }
 
     async fn package_ext_query(query: &mut SelectStatement, _: bool, filter: &IamPublishSystemFilterReq, _: &TardisFunsInst, _: &TardisContext) -> TardisResult<()> {
