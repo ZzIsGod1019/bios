@@ -150,6 +150,7 @@ pub async fn test(sysadmin_name: &str, sysadmin_password: &str, client: &mut BIO
                 set_cate_id: None,
                 kind: None,
                 sync_apps_group: None,
+                publish_system_ids: None,
             },
         )
         .await;
@@ -784,6 +785,7 @@ pub async fn login_by_oauth2(client: &mut BIOSWebTestClient) -> TardisResult<()>
                     supplier: TrimString(IamCertOAuth2Supplier::WechatMp.to_string()),
                     ak: TrimString(app_id.to_string()),
                     sk: TrimString(secret.to_string()),
+                    base_url: None,
                 }]),
                 cert_conf_by_ldap: None,
             },

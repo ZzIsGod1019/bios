@@ -22,6 +22,9 @@ pub struct IamAppAggAddReq {
 
     pub admin_ids: Option<Vec<String>>,
 
+    /// 绑定的发布系统 ID 列表
+    pub publish_system_ids: Option<Vec<String>>,
+
     pub disabled: Option<bool>,
     pub set_cate_id: Option<String>,
 
@@ -80,6 +83,8 @@ pub struct IamAppAggModifyReq {
     pub contact_phone: Option<String>,
 
     pub admin_ids: Option<Vec<String>>,
+    /// 绑定的发布系统 ID 列表
+    pub publish_system_ids: Option<Vec<String>>,
     pub set_cate_id: Option<String>,
 
     pub sync_apps_group: Option<bool>,
