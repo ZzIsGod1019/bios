@@ -484,11 +484,15 @@ impl IamAppServ {
             funs,
             ctx,
         )
-        .await
+        .await?;
+        IamSearchClient::async_add_or_modify_publish_system_search(publish_system_id, funs, ctx).await?;
+        Ok(())
     }
 
     pub async fn delete_rel_publish_system(app_id: &str, publish_system_id: &str, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<()> {
-        IamRelServ::delete_simple_rel(&IamRelKind::IamAppPublishSystem, app_id, publish_system_id, funs, ctx).await
+        IamRelServ::delete_simple_rel(&IamRelKind::IamAppPublishSystem, app_id, publish_system_id, funs, ctx).await?;
+        IamSearchClient::async_add_or_modify_publish_system_search(publish_system_id, funs, ctx).await?;
+        Ok(())
     }
 
     pub async fn find_id_rel_publish_system(

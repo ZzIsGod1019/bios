@@ -30,7 +30,7 @@ use crate::{
         },
         serv::{
             clients::iam_kv_client::IamKvClient, iam_account_serv::IamAccountServ, iam_app_serv::IamAppServ, iam_publish_system_serv::IamPublishSystemServ,
-            iam_role_serv::IamRoleServ, iam_set_serv::IamSetServ, iam_sub_deploy_serv::IamSubDeployServ, iam_tenant_serv::IamTenantServ,
+            iam_rel_serv::IamRelServ, iam_role_serv::IamRoleServ, iam_set_serv::IamSetServ, iam_sub_deploy_serv::IamSubDeployServ, iam_tenant_serv::IamTenantServ,
             iam_third_party_app_serv::IamThirdPartyAppServ,
         },
     },
@@ -159,12 +159,27 @@ impl IamSearchClient {
         } else {
             publish_system_resp.name.clone()
         };
+        let mock_ctx = TardisContext {
+            own_paths: "".to_string(),
+            ..ctx.clone()
+        };
+        let rel_app_ids = IamRelServ::find_to_id_rels(
+            &IamRelKind::IamAppPublishSystem,
+            &publish_system_resp.id,
+            None,
+            None,
+            funs,
+            &mock_ctx,
+        )
+        .await?;
+        
         let ext = json!({
             "name": publish_system_resp.name,
             "sys_ident": publish_system_resp.sys_ident,
             "rel_tenant_id": publish_system_resp.rel_tenant_id,
             "description": publish_system_resp.description,
             "scope_level": publish_system_resp.scope_level,
+            "rel_app_ids": rel_app_ids,
         });
         SpiSearchClient::save(
             &tag,
