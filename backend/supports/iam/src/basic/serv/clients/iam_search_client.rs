@@ -2,6 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use bios_basic::rbum::{
     dto::rbum_filer_dto::{RbumBasicFilterReq, RbumItemRelFilterReq, RbumSetFilterReq, RbumSetItemFilterReq},
+    helper::rbum_scope_helper,
+    rbum_enumeration::RbumScopeLevelKind,
     serv::{
         rbum_crud_serv::RbumCrudOperation,
         rbum_item_serv::RbumItemCrudOperation,
@@ -172,7 +174,15 @@ impl IamSearchClient {
             &mock_ctx,
         )
         .await?;
-        
+        // 数据共享权限处理
+        let mut visit_tenants = vec![rbum_scope_helper::get_path_item(RbumScopeLevelKind::L1.to_int(), &publish_system_resp.own_paths).unwrap_or_default()];
+        let mut visit_apps = rbum_scope_helper::get_path_item(RbumScopeLevelKind::L2.to_int(), &publish_system_resp.own_paths).map(|app| vec![app]).unwrap_or_default();
+        let mut own_paths = Some(publish_system_resp.own_paths.clone());
+        if publish_system_resp.scope_level == RbumScopeLevelKind::Root {
+            visit_apps.push("".to_string());
+            visit_tenants.push("".to_string());
+            own_paths = Some("".to_string());
+        }
         let ext = json!({
             "name": publish_system_resp.name,
             "sys_ident": publish_system_resp.sys_ident,
@@ -190,18 +200,14 @@ impl IamSearchClient {
                 content: Some(content),
                 data_source: None,
                 owner: Some(publish_system_resp.owner),
-                own_paths: if !publish_system_resp.own_paths.is_empty() {
-                    Some(publish_system_resp.own_paths.clone())
-                } else {
-                    None
-                },
+                own_paths,
                 create_time: Some(publish_system_resp.create_time),
                 update_time: Some(publish_system_resp.update_time),
                 ext: Some(ext),
                 visit_keys: Some(SearchItemVisitKeysReq {
                     accounts: None,
-                    apps: None,
-                    tenants: Some(vec![publish_system_resp.rel_tenant_id.clone()]),
+                    apps: Some(visit_apps),
+                    tenants: Some(visit_tenants),
                     roles: None,
                     groups: None,
                 }),

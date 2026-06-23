@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, str::FromStr};
+use std::{collections::HashMap, ops::Not, str::FromStr};
 use strum::Display;
 use tardis::{
     db::sea_orm::{self, DbErr, QueryResult, TryGetError, TryGetable},
@@ -28,6 +28,16 @@ pub enum FlowVarVisibilityKind {
     Hide,
 }
 
+impl Not for FlowVarVisibilityKind {
+    type Output = Self;
+    fn not(self) -> Self::Output {
+        match self {
+            FlowVarVisibilityKind::Show => FlowVarVisibilityKind::Hide,
+            FlowVarVisibilityKind::Hide => FlowVarVisibilityKind::Show,
+        }
+    }
+}
+
 /// 变量展示/隐藏条件规则
 ///
 /// 满足 ``conds`` 条件时，应用 ``visibility`` 指定的展示/隐藏状态
@@ -45,20 +55,24 @@ pub struct FlowVarVisibilityCondRule {
 #[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, poem_openapi::Object, sea_orm::FromJsonQueryResult)]
 pub struct FlowVarVisibilityInfo {
     /// 默认展示/隐藏状态
-    pub default_visibility: FlowVarVisibilityKind,
+    pub default_visibility: Option<FlowVarVisibilityKind>,
     /// 条件规则，满足条件时应用对应的展示/隐藏状态
     pub cond_rule: Option<FlowVarVisibilityCondRule>,
 }
 
 impl FlowVarVisibilityInfo {
-    /// 根据字段值解析变量的展示/隐藏状态，命中条件规则时使用规则状态，否则使用默认状态
+    /// 根据字段值解析变量的展示/隐藏状态
+    /// - 存在条件规则时：命中条件则使用规则状态，未命中则使用规则状态的反向状态
+    /// - 不存在条件规则时：使用默认状态
     pub fn resolve(&self, check_vars: &HashMap<String, Value>) -> FlowVarVisibilityKind {
         if let Some(cond_rule) = &self.cond_rule {
             if BasicQueryCondInfo::check_or_and_conds(&cond_rule.conds, check_vars).unwrap_or(false) {
                 return cond_rule.visibility.clone();
+            } else {
+                return !cond_rule.visibility.clone();
             }
         }
-        self.default_visibility.clone()
+        self.default_visibility.clone().unwrap_or(FlowVarVisibilityKind::Show)
     }
 }
 
