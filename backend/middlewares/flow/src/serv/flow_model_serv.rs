@@ -1616,7 +1616,12 @@ impl FlowModelServ {
             model_details
         };
 
-        Ok(result.first().cloned())
+        Ok(result.into_iter().max_by(|a, b| {
+            a.rel_model_id
+                .is_empty()
+                .cmp(&b.rel_model_id.is_empty())
+                .then_with(|| a.update_time.cmp(&b.update_time))
+        }))
     }
     /// 根据own_paths和rel_template_id获取模型ID
     /// 规则1：如果rel_template_id不为空，优先通过rel_template_id查找rel表类型为FlowModelTemplate关联的模型ID，找不到则直接返回默认模板ID
