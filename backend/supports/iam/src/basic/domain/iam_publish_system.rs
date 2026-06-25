@@ -11,9 +11,6 @@ pub struct Model {
     /// 系统标识
     #[index]
     pub sys_ident: Option<String>,
-    /// 所属分公司（租户 ID）
-    #[index]
-    pub rel_tenant_id: String,
     /// 描述
     pub description: Option<String>,
     #[fill_ctx(fill = "own_paths")]

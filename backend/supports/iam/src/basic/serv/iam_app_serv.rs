@@ -23,7 +23,7 @@ use crate::basic::domain::iam_app;
 use crate::basic::dto::iam_app_dto::{
     IamAppAddReq, IamAppAggAddReq, IamAppAggModifyReq, IamAppDetailResp, IamAppKind, IamAppModifyReq, IamAppSummaryResp, IamAppTransferOwnershipReq,
 };
-use crate::basic::dto::iam_filer_dto::{IamAppFilterReq, IamPublishSystemFilterReq};
+use crate::basic::dto::iam_filer_dto::IamAppFilterReq;
 use crate::basic::dto::iam_set_dto::IamSetItemAddReq;
 use crate::basic::serv::iam_cert_serv::IamCertServ;
 use crate::basic::serv::iam_key_cache_serv::IamIdentCacheServ;
@@ -515,26 +515,14 @@ impl IamAppServ {
 
     /// 校验发布系统所属分公司（租户）是否在当前上下文的 own_paths 范围内
     async fn check_rel_publish_system_tenant_in_ctx(publish_system_id: &str, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<()> {
-        let publish_system = IamPublishSystemServ::get_item(
-            publish_system_id,
-            &IamPublishSystemFilterReq {
-                basic: RbumBasicFilterReq {
-                    own_paths: Some("".to_string()),
-                    with_sub_own_paths: true,
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            funs,
-            ctx,
-        )
-        .await?;
-        let rel_tenant_id = &publish_system.rel_tenant_id;
+        let tenant_ids = IamPublishSystemServ::find_id_rel_tenant(publish_system_id, None, None, funs, ctx).await?;
         if ctx.own_paths.is_empty() {
             return Ok(());
         }
-        if ctx.own_paths == *rel_tenant_id || ctx.own_paths.starts_with(&format!("{rel_tenant_id}/")) {
-            return Ok(());
+        for rel_tenant_id in tenant_ids {
+            if ctx.own_paths == rel_tenant_id || ctx.own_paths.starts_with(&format!("{rel_tenant_id}/")) {
+                return Ok(());
+            }
         }
         Err(funs.err().unauthorized(
             &Self::get_obj_name(),

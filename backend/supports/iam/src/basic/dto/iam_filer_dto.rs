@@ -174,7 +174,6 @@ pub struct IamPublishSystemFilterReq {
     pub rel: Option<RbumItemRelFilterReq>,
     pub rel2: Option<RbumItemRelFilterReq>,
     pub sys_ident: Option<String>,
-    pub rel_tenant_id: Option<String>,
 }
 
 impl RbumItemFilterFetcher for IamPublishSystemFilterReq {

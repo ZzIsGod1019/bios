@@ -126,6 +126,9 @@ pub enum IamRelKind {
 
     /// 应用与发布系统关联
     IamAppPublishSystem,
+
+    /// 发布系统与租户关联
+    IamPublishSystemTenant,
 }
 
 #[derive(Display, Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize, poem_openapi::Enum)]

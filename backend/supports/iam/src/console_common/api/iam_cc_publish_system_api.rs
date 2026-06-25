@@ -115,12 +115,11 @@ impl IamCcPublishSystemApi {
                 ..Default::default()
             },
             sys_ident: sys_ident.0,
-            rel_tenant_id: rel_tenant_id.0,
             ..Default::default()
         };
-        if let Some(tenant_id) = tenant_id.0 {
+        if let Some(tenant_id) = tenant_id.0.or(rel_tenant_id.0) {
             filter.basic.own_paths = Some(tenant_id.clone());
-            filter.rel_tenant_id = Some(tenant_id);
+            filter.rel = Some(IamPublishSystemServ::with_tenant_rel_filter(&tenant_id));
             filter.basic.ignore_scope = true;
         }
         let result = IamPublishSystemServ::paginate_items(&filter, page_number.0, page_size.0, desc_by_create.0, desc_by_update.0, &funs, &ctx.0).await?;

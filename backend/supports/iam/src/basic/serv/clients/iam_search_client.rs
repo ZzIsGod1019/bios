@@ -175,7 +175,8 @@ impl IamSearchClient {
         )
         .await?;
         // 数据共享权限处理
-        let mut visit_tenants = vec![rbum_scope_helper::get_path_item(RbumScopeLevelKind::L1.to_int(), &publish_system_resp.own_paths).unwrap_or_default()];
+        let mut visit_tenants = publish_system_resp.rel_tenant_ids.clone();
+        visit_tenants.push(rbum_scope_helper::get_path_item(RbumScopeLevelKind::L1.to_int(), &publish_system_resp.own_paths).unwrap_or_default());
         let mut visit_apps = rbum_scope_helper::get_path_item(RbumScopeLevelKind::L2.to_int(), &publish_system_resp.own_paths).map(|app| vec![app]).unwrap_or_default();
         let mut own_paths = Some(publish_system_resp.own_paths.clone());
         if publish_system_resp.scope_level == RbumScopeLevelKind::Root {
@@ -183,10 +184,12 @@ impl IamSearchClient {
             visit_tenants.push("".to_string());
             own_paths = Some("".to_string());
         }
+        visit_tenants.sort();
+        visit_tenants.dedup();
         let ext = json!({
             "name": publish_system_resp.name,
             "sys_ident": publish_system_resp.sys_ident,
-            "rel_tenant_id": publish_system_resp.rel_tenant_id,
+            "rel_tenant_ids": publish_system_resp.rel_tenant_ids,
             "description": publish_system_resp.description,
             "scope_level": publish_system_resp.scope_level,
             "rel_app_ids": rel_app_ids,
