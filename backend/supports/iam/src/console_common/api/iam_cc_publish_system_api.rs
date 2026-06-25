@@ -120,7 +120,7 @@ impl IamCcPublishSystemApi {
         if let Some(tenant_id) = tenant_id.0.or(rel_tenant_id.0) {
             filter.basic.own_paths = Some(tenant_id.clone());
             filter.rel = Some(IamPublishSystemServ::with_tenant_rel_filter(&tenant_id));
-            filter.basic.ignore_scope = true;
+            // filter.basic.ignore_scope = true;
         }
         let result = IamPublishSystemServ::paginate_items(&filter, page_number.0, page_size.0, desc_by_create.0, desc_by_update.0, &funs, &ctx.0).await?;
         ctx.0.execute_task().await?;

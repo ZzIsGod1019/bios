@@ -3,9 +3,10 @@ use std::collections::HashSet;
 use async_trait::async_trait;
 use bios_basic::rbum::dto::rbum_filer_dto::{RbumBasicFilterReq, RbumItemRelFilterReq};
 use bios_basic::rbum::dto::rbum_item_dto::{RbumItemKernelAddReq, RbumItemKernelModifyReq};
-use bios_basic::rbum::rbum_enumeration::RbumRelFromKind;
+use bios_basic::rbum::helper::rbum_scope_helper;
+use bios_basic::rbum::rbum_enumeration::{RbumRelFromKind, RbumScopeLevelKind};
 use bios_basic::rbum::serv::rbum_crud_serv::RbumCrudOperation;
-use bios_basic::rbum::serv::rbum_item_serv::RbumItemCrudOperation;
+use bios_basic::rbum::serv::rbum_item_serv::{RbumItemCrudOperation, RbumItemServ};
 use tardis::basic::{dto::TardisContext, field::TrimString, result::TardisResult};
 use tardis::db::sea_orm::sea_query::{Expr, SelectStatement};
 use tardis::db::sea_orm::*;
@@ -70,11 +71,12 @@ impl
             Self::check_tenants_exist(rel_tenant_ids, funs, ctx).await?;
             let current_tenant_ids = Self::find_id_rel_tenant(id, None, None, funs, ctx).await?;
             let new_tenant_ids = Self::normalize_tenant_ids(rel_tenant_ids);
-            if Self::tenant_ids_changed(&current_tenant_ids, &new_tenant_ids) && Self::count_app_rel(id, funs, ctx).await? > 0 {
+            let removed_tenant_ids = Self::removed_tenant_ids(&current_tenant_ids, &new_tenant_ids);
+            if !removed_tenant_ids.is_empty() && Self::has_app_rel_in_tenants(id, &removed_tenant_ids, funs, ctx).await? {
                 return Err(funs.err().conflict(
                     &Self::get_obj_name(),
                     "modify",
-                    "publish system is associated with apps and cannot change tenant",
+                    "publish system has apps in removed tenants and cannot remove tenant association",
                     "409-iam-publish-system-tenant-change-conflict",
                 ));
             }
@@ -263,10 +265,41 @@ impl IamPublishSystemServ {
         tenant_ids.iter().map(|id| id.to_string()).collect()
     }
 
-    fn tenant_ids_changed(current: &[String], new: &[String]) -> bool {
-        let current_set: HashSet<_> = current.iter().cloned().collect();
+    fn removed_tenant_ids(current: &[String], new: &[String]) -> Vec<String> {
         let new_set: HashSet<_> = new.iter().cloned().collect();
-        current_set != new_set
+        current.iter().filter(|id| !new_set.contains(*id)).cloned().collect()
+    }
+
+    async fn has_app_rel_in_tenants(publish_system_id: &str, tenant_ids: &[String], funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<bool> {
+        if tenant_ids.is_empty() {
+            return Ok(false);
+        }
+        let tenant_set: HashSet<_> = tenant_ids.iter().cloned().collect();
+        let global_ctx = TardisContext {
+            own_paths: "".to_string(),
+            ..ctx.clone()
+        };
+        let app_ids = IamRelServ::find_to_id_rels(&IamRelKind::IamAppPublishSystem, publish_system_id, None, None, funs, &global_ctx).await?;
+        if app_ids.is_empty() {
+            return Ok(false);
+        }
+        let apps = RbumItemServ::find_rbums(
+            &RbumBasicFilterReq {
+                ids: Some(app_ids),
+                own_paths: Some("".to_string()),
+                with_sub_own_paths: true,
+                ..Default::default()
+            },
+            None,
+            None,
+            funs,
+            &global_ctx,
+        )
+        .await?;
+        Ok(apps.iter().any(|app| {
+            rbum_scope_helper::get_path_item(RbumScopeLevelKind::L1.to_int(), &app.own_paths)
+                .is_some_and(|tenant_id| tenant_set.contains(&tenant_id))
+        }))
     }
 
     async fn fill_summary_rel_tenant_ids(resp: &mut IamPublishSystemSummaryResp, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<()> {
