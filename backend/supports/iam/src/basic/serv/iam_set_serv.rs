@@ -45,7 +45,7 @@ pub const API_ROOT_SET_BUS_CODE: &str = "__apis__";
 pub const DATA_GUARD_ROOT_SET_BUS_CODE: &str = "__data_guards__";
 
 /// Platform-level virtual root node id for merged apps tree
-pub const PLATFORM_APPS_TREE_ROOT_ID: &str = "__iam_platform_apps_root__";
+pub const PLATFORM_APPS_TREE_ROOT_ID: &str = "";
 /// Platform-level virtual root node display name for merged apps tree
 pub const PLATFORM_APPS_TREE_ROOT_NAME: &str = "平台";
 

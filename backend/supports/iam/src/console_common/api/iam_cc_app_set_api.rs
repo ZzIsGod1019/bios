@@ -130,6 +130,7 @@ impl IamCcAppSetApi {
         &self,
         parent_sys_code: Query<Option<String>>,
         only_related: Query<Option<bool>>,
+        tenant_id: Query<Option<String>>,
         tenant_ids: Query<Option<String>>,
         ctx: TardisContextExtractor,
         request: &Request,
@@ -144,8 +145,23 @@ impl IamCcAppSetApi {
         let sys_ctx = IamCertServ::use_sys_ctx_unsafe(ext_ctx.clone())?;
         try_set_real_ip_from_req_to_ctx(request, &sys_ctx).await?;
 
-        let tenant_id_list: Vec<String> = if let Some(ids) = specific_tenant_ids {
-            ids
+        let tenants = if let Some(ids) = specific_tenant_ids {
+            IamTenantServ::find_items(
+                &IamTenantFilterReq {
+                    basic: RbumBasicFilterReq {
+                        ignore_scope: true,
+                        ids: Some(ids),
+                        enabled: Some(true),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                Some(true),
+                None,
+                &funs,
+                &sys_ctx,
+            )
+            .await?
         } else {
             IamTenantServ::find_items(
                 &IamTenantFilterReq {
@@ -164,39 +180,10 @@ impl IamCcAppSetApi {
                 &sys_ctx,
             )
             .await?
-            .into_iter()
-            .map(|t| t.id)
-            .collect()
         };
+        let platform_apps_tree = IamSetServ::get_platform_apps_tree(&tenants, parent_sys_code.0, tenant_id.0, only_related, &funs, &sys_ctx).await?;
+        result.insert("".to_string(), platform_apps_tree);
 
-        let parent_sys_code_q = parent_sys_code.0.clone();
-        for tid in tenant_id_list {
-            let t_ctx = IamCertServ::use_tenant_ctx(sys_ctx.clone(), &tid)?;
-            let set_id = IamSetServ::get_default_set_id_by_ctx(&IamSetKind::Apps, &funs, &t_ctx).await?;
-            let tree = if only_related {
-                IamSetServ::get_tree_with_auth_by_account_opt(&set_id, &t_ctx.owner, &funs, &t_ctx).await?
-            } else {
-                Some(
-                    IamSetServ::get_tree(
-                        &set_id,
-                        &mut RbumSetTreeFilterReq {
-                            fetch_cate_item: true,
-                            hide_item_with_disabled: true,
-                            sys_codes: parent_sys_code_q.clone().map(|parent_sys_code| vec![parent_sys_code]),
-                            sys_code_query_kind: Some(RbumSetCateLevelQueryKind::Sub),
-                            sys_code_query_depth: Some(1),
-                            ..Default::default()
-                        },
-                        &funs,
-                        &t_ctx,
-                    )
-                    .await?,
-                )
-            };
-            if let Some(tree) = tree {
-                result.insert(tid, tree);
-            }
-        }
         ext_ctx.execute_task().await?;
         TardisResp::ok(result)
     }
