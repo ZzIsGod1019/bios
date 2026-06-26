@@ -189,7 +189,7 @@ impl IamSearchClient {
         let ext = json!({
             "name": publish_system_resp.name,
             "sys_ident": publish_system_resp.sys_ident,
-            "rel_tenant_ids": publish_system_resp.rel_tenant_ids,
+            "rel_tenant_id": publish_system_resp.rel_tenant_ids,
             "description": publish_system_resp.description,
             "scope_level": publish_system_resp.scope_level,
             "rel_app_ids": rel_app_ids,
