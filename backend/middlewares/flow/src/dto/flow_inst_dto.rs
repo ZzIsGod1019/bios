@@ -468,8 +468,6 @@ pub struct FlowInstFindStateAndTransitionsReq {
     pub vars: Option<HashMap<String, Value>>,
     /// 状态类型
     pub sys_states: Option<Vec<FlowSysStateKind>>,
-    /// 用于判断验证内容是否展示的字段值
-    pub visibility_vars: Option<HashMap<String, Value>>,
 }
 
 /// 实例状态及流转信息

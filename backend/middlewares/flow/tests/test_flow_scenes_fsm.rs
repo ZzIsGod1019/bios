@@ -676,7 +676,6 @@ pub async fn test(
                 flow_inst_id: req_inst_id1.clone(),
                 vars: None,
                 sys_states: None,
-                visibility_vars: None,
             }],
         )
         .await;
@@ -706,7 +705,6 @@ pub async fn test(
                 flow_inst_id: req_inst_id1.clone(),
                 vars: None,
                 sys_states: None,
-                visibility_vars: None,
             }],
         )
         .await;

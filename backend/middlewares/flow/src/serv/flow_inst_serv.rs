@@ -1835,7 +1835,7 @@ impl FlowInstServ {
         .map(|inst| inst.rel_business_obj_id)
         .unique()
         .collect_vec();
-        let state_and_next_transitions = join_all(
+        let inst_transition_items = join_all(
             flow_insts
                 .iter()
                 .map(|flow_inst| async {
@@ -1844,35 +1844,22 @@ impl FlowInstServ {
                         rel_flow_version_map.get(&flow_inst.tag).cloned(),
                     ) {
                         Self::do_find_next_transitions(flow_inst, None, &req.vars, false, funs, ctx).await.ok().map(|resp| {
-                            let next_flow_transitions = if (unfinished_approve_flow_obj_ids.contains(&flow_inst.rel_business_obj_id)
+                            let next_flow_transitions = resp.next_flow_transitions.clone();
+                            let transitions = if (unfinished_approve_flow_obj_ids.contains(&flow_inst.rel_business_obj_id)
                                 && flow_inst.artifacts.clone().unwrap_or_default().rel_transition_id.is_none())
                                 || flow_inst.artifacts.clone().unwrap_or_default().state == Some(FlowInstStateKind::Approval)
                             {
                                 vec![]
+                            } else if let Some(sys_states) = &req.sys_states {
+                                next_flow_transitions
+                                    .into_iter()
+                                    .filter(|tran| sys_states.contains(&tran.next_flow_state_sys_state))
+                                    .collect_vec()
                             } else {
-                                let transitions = if let Some(sys_states) = &req.sys_states {
-                                    resp.next_flow_transitions.into_iter().filter(|tran| sys_states.contains(&tran.next_flow_state_sys_state)).collect_vec()
-                                } else {
-                                    resp.next_flow_transitions
-                                };
-                                if req.visibility_vars.is_some() {
-                                    let check_vars = Self::build_visibility_check_vars(flow_inst, req);
-                                    Self::apply_visibility_to_transitions(transitions, &check_vars)
-                                } else {
-                                    transitions
-                                }
+                                next_flow_transitions
                             };
-                            FlowInstFindStateAndTransitionsResp {
-                            flow_inst_id: resp.flow_inst_id,
-                            rel_business_obj_id: flow_inst.rel_business_obj_id.clone(),
-                            current_flow_state_name: resp.current_flow_state_name,
-                            current_flow_state_sys_kind: resp.current_flow_state_sys_kind,
-                            current_flow_state_color: resp.current_flow_state_color,
-                            current_flow_state_ext: resp.current_flow_state_ext,
-                            finish_time: resp.finish_time,
-                            next_flow_transitions,
-                            rel_flow_versions,
-                        }})
+                            (flow_inst.clone(), req.clone(), rel_flow_versions, resp, transitions)
+                        })
                     } else {
                         None
                     }
@@ -1883,11 +1870,54 @@ impl FlowInstServ {
         .into_iter()
         .flatten()
         .collect_vec();
+        let visibility_items = inst_transition_items
+            .iter()
+            .filter(|(_, _, _, _, transitions)| Self::transitions_need_visibility_filter(transitions))
+            .map(|(flow_inst, _, _, _, _)| (flow_inst.tag.clone(), flow_inst.rel_business_obj_id.clone()))
+            .unique()
+            .collect_vec();
+        let batch_external_vars = Self::batch_get_new_vars(&visibility_items, funs, ctx).await?;
+        let state_and_next_transitions = inst_transition_items
+            .into_iter()
+            .map(|(flow_inst, req, rel_flow_versions, resp, transitions)| {
+                let next_flow_transitions = if Self::transitions_need_visibility_filter(&transitions) {
+                    let external_vars = batch_external_vars
+                        .get(&flow_inst.rel_business_obj_id)
+                        .cloned()
+                        .unwrap_or_default();
+                    let check_vars = Self::build_visibility_check_vars(&flow_inst, &req, &external_vars);
+                    Self::apply_visibility_to_transitions(transitions, &check_vars)
+                } else {
+                    transitions
+                };
+                FlowInstFindStateAndTransitionsResp {
+                    flow_inst_id: resp.flow_inst_id,
+                    rel_business_obj_id: flow_inst.rel_business_obj_id.clone(),
+                    current_flow_state_name: resp.current_flow_state_name,
+                    current_flow_state_sys_kind: resp.current_flow_state_sys_kind,
+                    current_flow_state_color: resp.current_flow_state_color,
+                    current_flow_state_ext: resp.current_flow_state_ext,
+                    finish_time: resp.finish_time,
+                    next_flow_transitions,
+                    rel_flow_versions,
+                }
+            })
+            .collect_vec();
 
         Ok(state_and_next_transitions)
     }
 
-    fn build_visibility_check_vars(flow_inst: &FlowInstDetailResp, req: &FlowInstFindStateAndTransitionsReq) -> HashMap<String, Value> {
+    fn transitions_need_visibility_filter(transitions: &[FlowInstFindNextTransitionResp]) -> bool {
+        transitions.iter().any(|transition| {
+            transition.vars_collect.as_ref().is_some_and(|vars| vars.iter().any(|var| var.visibility.is_some()))
+        })
+    }
+
+    fn build_visibility_check_vars(
+        flow_inst: &FlowInstDetailResp,
+        req: &FlowInstFindStateAndTransitionsReq,
+        external_vars: &HashMap<String, Value>,
+    ) -> HashMap<String, Value> {
         let mut check_vars = HashMap::new();
         if let Some(current_vars) = &flow_inst.current_vars {
             check_vars.extend(current_vars.clone());
@@ -1895,8 +1925,9 @@ impl FlowInstServ {
         if let Some(vars) = &req.vars {
             check_vars.extend(vars.clone());
         }
-        if let Some(visibility_vars) = &req.visibility_vars {
-            check_vars.extend(visibility_vars.clone());
+        check_vars.extend(external_vars.clone());
+        if let Some(state_name) = &flow_inst.current_state_name {
+            check_vars.insert("status".to_string(), json!(state_name));
         }
         check_vars
     }
@@ -2781,22 +2812,59 @@ impl FlowInstServ {
         Ok(())
     }
 
-    async fn get_new_vars(tag: &str, rel_business_obj_id: String, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<HashMap<String, Value>> {
-        let resp = FlowExternalServ::do_query_field(tag, vec![rel_business_obj_id.clone()], &ctx.own_paths, ctx, funs)
-            .await?
-            .objs
-            .pop()
-            .map(|val| TardisFuns::json.json_to_obj::<HashMap<String, Value>>(val).unwrap_or_default())
-            .unwrap_or_default();
-        // 去除key的custom_前缀
+    fn parse_query_field_obj(val: Value) -> (Option<String>, HashMap<String, Value>) {
+        let raw = TardisFuns::json.json_to_obj::<HashMap<String, Value>>(val).unwrap_or_default();
+        let rel_id = raw.get("id").and_then(|v| match v {
+            Value::String(s) => Some(s.clone()),
+            Value::Number(n) => n.as_i64().map(|i| i.to_string()),
+            _ => None,
+        });
         let mut new_vars = HashMap::new();
-        for (key, value) in &resp {
+        for (key, value) in raw {
+            if key == "id" {
+                continue;
+            }
             if key.contains("custom_") {
-                new_vars.insert(key[7..key.len()].to_string(), value.clone());
+                new_vars.insert(key[7..key.len()].to_string(), value);
             } else {
-                new_vars.insert(key.clone(), value.clone());
+                new_vars.insert(key, value);
             }
         }
+        (rel_id, new_vars)
+    }
+
+    async fn batch_get_new_vars(
+        items: &[(String, String)],
+        funs: &TardisFunsInst,
+        ctx: &TardisContext,
+    ) -> TardisResult<HashMap<String, HashMap<String, Value>>> {
+        if items.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let mut result = HashMap::new();
+        let mut grouped: HashMap<String, Vec<String>> = HashMap::new();
+        for (tag, rel_business_obj_id) in items {
+            grouped.entry(tag.clone()).or_default().push(rel_business_obj_id.clone());
+        }
+        for (tag, mut obj_ids) in grouped {
+            obj_ids.sort();
+            obj_ids.dedup();
+            let resp = FlowExternalServ::do_query_field(&tag, obj_ids.clone(), &ctx.own_paths, ctx, funs).await?;
+            for obj in resp.objs {
+                let (rel_id, vars) = Self::parse_query_field_obj(obj);
+                if let Some(rel_id) = rel_id {
+                    result.insert(rel_id, vars);
+                }
+            }
+        }
+        Ok(result)
+    }
+
+    async fn get_new_vars(tag: &str, rel_business_obj_id: String, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<HashMap<String, Value>> {
+        let mut new_vars = Self::batch_get_new_vars(&[(tag.to_string(), rel_business_obj_id.clone())], funs, ctx)
+            .await?
+            .remove(&rel_business_obj_id)
+            .unwrap_or_default();
         // 添加当前状态名称
         if let Some(flow_id) = Self::get_inst_ids_by_rel_business_obj_id(vec![rel_business_obj_id], true, funs, ctx).await?.pop() {
             let current_state_name = Self::get(&flow_id, funs, ctx).await?.current_state_name.unwrap_or_default();
