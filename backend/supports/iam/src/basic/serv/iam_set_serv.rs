@@ -509,13 +509,19 @@ impl IamSetServ {
                     own_paths: set_rel.to_own_paths.clone(),
                     ..ctx.clone()
                 };
+                let querying_this_rel_cate = filter.sys_codes.as_ref().is_some_and(|codes| {
+                    codes.iter().any(|code| !code.is_empty() && code == &r.sys_code)
+                });
                 let mut set_filter = filter.clone();
                 if set_filter.sys_codes.is_some() {
                     set_filter.sys_codes = Some(vec!["".to_string()]);
                 }
-                if set_filter.sys_codes.is_some() && set_filter.sys_code_query_depth == Some(1) && set_filter.sys_code_query_kind == Some(RbumSetCateLevelQueryKind::CurrentAndSub)
-                {
-                    //只获取一层，那么就不需要查询关联的
+                // 懒加载平台层级时跳过跨租户展开；用户显式选中跨租户节点时展开关联租户的一级组织
+                let skip_rel_tenant_expand = filter.sys_codes.is_some()
+                    && filter.sys_code_query_depth == Some(1)
+                    && filter.sys_code_query_kind == Some(RbumSetCateLevelQueryKind::CurrentAndSub)
+                    && !querying_this_rel_cate;
+                if skip_rel_tenant_expand {
                     result_main.push(r);
                     continue;
                 }
