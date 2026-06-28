@@ -64,11 +64,13 @@ pub struct FlowInstServ;
 impl FlowInstServ {
     // 尝试创建工作流实例，成功后返回实例ID,若找不到匹配的工作流模型则直接返回空
     pub async fn try_start(start_req: &FlowInstStartReq, current_state_name: Option<String>, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<String> {
-        let mut create_vars = if start_req.transition_id.is_some() {
+        let need_fetch = start_req.transition_id.is_some();
+        let new_vars = if need_fetch {
             Self::get_new_vars(&start_req.tag, start_req.rel_business_obj_id.clone(), funs, ctx).await?
         } else {
             HashMap::default()
         };
+        let mut create_vars = new_vars.clone();
         if let Some(check_vars) = &start_req.check_vars {
             create_vars.extend(check_vars.clone());
             create_vars.insert("changes".to_string(), json!(check_vars.keys().collect_vec()));
@@ -140,7 +142,7 @@ impl FlowInstServ {
                 }
                 Ok(inst_id)
             } else {
-                let inst_id = Self::start_secondary_flow(start_req, false, &rel_model, None, funs, ctx).await?;
+                let inst_id = Self::start_secondary_flow(start_req, false, &rel_model, None, Some(new_vars), funs, ctx).await?;
                 let inst = Self::get(&inst_id, funs, ctx).await?;
                 FlowSearchClient::add_or_modify_instance_search(&inst_id, false, funs, ctx).await?;
                 if inst.finish_abort.is_none() {
@@ -214,6 +216,7 @@ impl FlowInstServ {
                 },
                 true,
                 &rel_child_model,
+                None,
                 None,
                 funs,
                 ctx,
@@ -300,6 +303,7 @@ impl FlowInstServ {
         child: bool,
         flow_model: &FlowModelDetailResp,
         flow_version_id: Option<String>,
+        prefetched_new_vars: Option<HashMap<String, Value>>,
         funs: &TardisFunsInst,
         ctx: &TardisContext,
     ) -> TardisResult<String> {
@@ -332,7 +336,13 @@ impl FlowInstServ {
             .find(|tran| tran.id == rel_transition)
             .ok_or_else(|| funs.err().not_found("flow_inst_serv", "start_secondary_flow", "model is not exist", "404-flow-model-not-found"))?
             .clone();
-        if !child && Self::start_dry_run(start_req, &current_version_id, funs, ctx).await?.state_kind == FlowStateKind::Finish {
+        let need_fetch = start_req.transition_id.is_some();
+        if !child
+            && Self::start_dry_run(start_req, &current_version_id, prefetched_new_vars.clone(), funs, ctx)
+                .await?
+                .state_kind
+                == FlowStateKind::Finish
+        {
             let form_map = HashMap::from([(flow_model.init_state_id.clone(), start_req.vars.clone().unwrap_or_default())]);
             Self::finish_approve_flow(
                 rel_transition_ext,
@@ -365,7 +375,15 @@ impl FlowInstServ {
         )
         .await?;
         let inst_id = TardisFuns::field.nanoid();
-        let create_vars = Self::get_new_vars(&start_req.tag, start_req.rel_business_obj_id.to_string(), funs, ctx).await?;
+        let create_vars = Self::resolve_new_vars(
+            prefetched_new_vars,
+            need_fetch,
+            &start_req.tag,
+            &start_req.rel_business_obj_id,
+            funs,
+            ctx,
+        )
+        .await?;
         let mut current_vars = create_vars.clone();
         if let Some(check_vars) = &start_req.check_vars {
             current_vars.extend(check_vars.clone());
@@ -474,12 +492,23 @@ impl FlowInstServ {
     }
 
     // 创建实例（干跑） 返回终止的状态ID
-    async fn start_dry_run(start_req: &FlowInstStartReq, rel_flow_version_id: &str, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<FlowStateDetailResp> {
-        let mut create_vars = if start_req.transition_id.is_some() {
-            Self::get_new_vars(&start_req.tag, start_req.rel_business_obj_id.clone(), funs, ctx).await?
-        } else {
-            HashMap::default()
-        };
+    async fn start_dry_run(
+        start_req: &FlowInstStartReq,
+        rel_flow_version_id: &str,
+        prefetched_new_vars: Option<HashMap<String, Value>>,
+        funs: &TardisFunsInst,
+        ctx: &TardisContext,
+    ) -> TardisResult<FlowStateDetailResp> {
+        let need_fetch = start_req.transition_id.is_some();
+        let mut create_vars = Self::resolve_new_vars(
+            prefetched_new_vars,
+            need_fetch,
+            &start_req.tag,
+            &start_req.rel_business_obj_id,
+            funs,
+            ctx,
+        )
+        .await?;
         if let Some(check_vars) = &start_req.check_vars {
             create_vars.extend(check_vars.clone());
         }
@@ -2074,6 +2103,7 @@ impl FlowInstServ {
                     false,
                     &approve_model,
                     Some(approve_model_version.id),
+                    None,
                     funs,
                     ctx,
                 )
@@ -2858,6 +2888,24 @@ impl FlowInstServ {
             }
         }
         Ok(result)
+    }
+
+    async fn resolve_new_vars(
+        prefetched: Option<HashMap<String, Value>>,
+        need_fetch: bool,
+        tag: &str,
+        rel_business_obj_id: &str,
+        funs: &TardisFunsInst,
+        ctx: &TardisContext,
+    ) -> TardisResult<HashMap<String, Value>> {
+        if let Some(vars) = prefetched {
+            return Ok(vars);
+        }
+        if need_fetch {
+            Self::get_new_vars(tag, rel_business_obj_id.to_string(), funs, ctx).await
+        } else {
+            Ok(HashMap::default())
+        }
     }
 
     async fn get_new_vars(tag: &str, rel_business_obj_id: String, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<HashMap<String, Value>> {
