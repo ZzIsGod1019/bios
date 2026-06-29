@@ -1092,7 +1092,7 @@ impl IamAccountServ {
         let sets = IamSetServ::find_sets_by_account_id_and_kind(account_id, &IamSetKind::Apps, funs, ctx).await?;
         let mut seen_ids = HashSet::new();
         let sets: Vec<_> = sets.into_iter().filter(|set| !set.own_paths.contains('/')).filter(|set| seen_ids.insert(set.id.clone())).collect();
-        let has_platform_set = sets.iter().any(|set| set.own_paths.is_empty());
+        let has_platform_set = IamSetServ::account_has_platform_apps_auth(account_id, funs, ctx).await?;
 
         let mut apps = Vec::new();
         let mut app_role_read = HashMap::new();
@@ -1108,7 +1108,24 @@ impl IamAccountServ {
                 ..ctx.clone()
             };
             let app_items = if has_platform_set {
-                IamSetServ::get_all_apps_in_set(&set.id, funs, &tenant_ctx).await?
+                IamAppServ::find_items(
+                    &IamAppFilterReq {
+                        basic: RbumBasicFilterReq {
+                            with_sub_own_paths: true,
+                            enabled: Some(true),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                    None,
+                    None,
+                    funs,
+                    &tenant_ctx,
+                )
+                .await?
+                .into_iter()
+                .map(|app| (app.id, app.name))
+                .collect()
             } else {
                 IamSetServ::get_app_with_auth_by_account(&set.id, account_id, funs, &tenant_ctx).await?
             };

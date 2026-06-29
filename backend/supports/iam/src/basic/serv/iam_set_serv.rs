@@ -121,6 +121,14 @@ impl IamSetServ {
         .await
     }
 
+    /// Whether the account is bound to the platform Apps root (grants full apps tree across all tenants).
+    ///
+    /// 账号是否挂载在平台层 Apps 根节点（等价于拥有全部租户应用树权限）。
+    pub async fn account_has_platform_apps_auth(account_id: &str, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<bool> {
+        let sets = Self::find_sets_by_account_id_and_kind(account_id, &IamSetKind::Apps, funs, ctx).await?;
+        Ok(sets.iter().any(|set| set.own_paths.is_empty()))
+    }
+
     pub async fn init_set(set_kind: IamSetKind, scope_level: RbumScopeLevelKind, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<(String, Option<(String, String)>)> {
         let code = Self::get_default_code(&set_kind, &ctx.own_paths);
         let set_id = RbumSetServ::add_rbum(
@@ -627,6 +635,8 @@ impl IamSetServ {
         funs: &TardisFunsInst,
         sys_ctx: &TardisContext,
     ) -> TardisResult<RbumSetTreeResp> {
+        // Platform root binding implies full tree; align with get_account_apps_from_all_sets.
+        let only_related = only_related && !Self::account_has_platform_apps_auth(&sys_ctx.owner, funs, sys_ctx).await?;
         let tenant_id_set: HashSet<String> = tenants.iter().map(|t| t.id.clone()).collect();
 
         if let Some(parent) = parent_sys_code.as_ref().filter(|p| !p.is_empty() && *p != PLATFORM_APPS_TREE_ROOT_ID) {
