@@ -75,12 +75,32 @@ impl IamSetServ {
         )
         .await?;
 
-        // 去重并收集 rel_rbum_set_id
-        let set_ids: Vec<String> = set_items.iter().map(|item| item.rel_rbum_set_id.clone()).collect::<HashSet<String>>().into_iter().collect();
-
-        if set_ids.is_empty() {
+        if set_items.is_empty() {
             return Ok(vec![]);
         }
+
+        // 存在 own_paths 为空的 set item，表示账号绑定了平台层根节点，等价于关联所有 set
+        if set_items.iter().any(|item| item.own_paths.is_empty()) {
+            let sys_ctx = TardisContext { own_paths: "".to_string(), ..ctx.clone() };
+            return RbumSetServ::find_rbums(
+                &RbumSetFilterReq {
+                    basic: RbumBasicFilterReq {
+                        with_sub_own_paths: true,
+                        ..Default::default()
+                    },
+                    rel: None,
+                    kind: Some(set_kind.to_string()),
+                },
+                None,
+                None,
+                funs,
+                &sys_ctx,
+            )
+            .await;
+        }
+
+        // 去重并收集 rel_rbum_set_id
+        let set_ids: Vec<String> = set_items.iter().map(|item| item.rel_rbum_set_id.clone()).collect::<HashSet<String>>().into_iter().collect();
 
         // 根据 set_ids 查询 set 信息，并过滤出指定 kind 的 set
         RbumSetServ::find_rbums(
