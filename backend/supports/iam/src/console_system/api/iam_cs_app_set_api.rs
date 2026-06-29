@@ -119,7 +119,7 @@ impl IamCsAppSetApi {
     #[oai(path = "/item/batch", method = "put")]
     async fn batch_add_set_item(
         &self,
-        tenant_id: Query<String>,
+        tenant_id: Query<Option<String>>,
         add_req: Json<IamSetItemWithDefaultSetAddReq>,
         ctx: TardisContextExtractor,
         request: &Request,
@@ -127,7 +127,7 @@ impl IamCsAppSetApi {
         let mut funs = iam_constants::get_tardis_inst();
         try_set_real_ip_from_req_to_ctx(request, &ctx.0).await?;
         let tenant_ctx = TardisContext {
-            own_paths: tenant_id.0.clone(),
+            own_paths: tenant_id.0.clone().unwrap_or_default(),
             ..ctx.0.clone()
         };
         funs.begin().await?;
