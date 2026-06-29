@@ -79,8 +79,29 @@ impl IamSetServ {
             return Ok(vec![]);
         }
 
-        // 存在 own_paths 为空的 set item，表示账号绑定了平台层根节点，等价于关联所有 set
-        if set_items.iter().any(|item| item.own_paths.is_empty()) {
+        // 去重并收集 rel_rbum_set_id
+        let set_ids: Vec<String> = set_items.iter().map(|item| item.rel_rbum_set_id.clone()).collect::<HashSet<String>>().into_iter().collect();
+
+        // 根据 set_ids 查询 set 信息，并过滤出指定 kind 的 set
+        let sets = RbumSetServ::find_rbums(
+            &RbumSetFilterReq {
+                basic: RbumBasicFilterReq {
+                    ids: Some(set_ids),
+                    with_sub_own_paths: true,
+                    ..Default::default()
+                },
+                rel: None,
+                kind: Some(set_kind.to_string()),
+            },
+            None,
+            None,
+            funs,
+            ctx,
+        )
+        .await?;
+
+        // 存在 own_paths 为空的 set，表示账号绑定了平台层根节点，等价于关联所有 set
+        if sets.iter().any(|set| set.own_paths.is_empty()) {
             let sys_ctx = TardisContext { own_paths: "".to_string(), ..ctx.clone() };
             return RbumSetServ::find_rbums(
                 &RbumSetFilterReq {
@@ -99,26 +120,7 @@ impl IamSetServ {
             .await;
         }
 
-        // 去重并收集 rel_rbum_set_id
-        let set_ids: Vec<String> = set_items.iter().map(|item| item.rel_rbum_set_id.clone()).collect::<HashSet<String>>().into_iter().collect();
-
-        // 根据 set_ids 查询 set 信息，并过滤出指定 kind 的 set
-        RbumSetServ::find_rbums(
-            &RbumSetFilterReq {
-                basic: RbumBasicFilterReq {
-                    ids: Some(set_ids),
-                    with_sub_own_paths: true,
-                    ..Default::default()
-                },
-                rel: None,
-                kind: Some(set_kind.to_string()),
-            },
-            None,
-            None,
-            funs,
-            ctx,
-        )
-        .await
+        Ok(sets)
     }
 
     /// Whether the account is bound to the platform Apps root (grants full apps tree across all tenants).
