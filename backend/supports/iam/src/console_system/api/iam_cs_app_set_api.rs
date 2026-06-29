@@ -100,11 +100,11 @@ impl IamCsAppSetApi {
     /// Delete App Set Item (App Or Account) By App Set Item Id
     /// 根据应用集项ID删除应用集项（应用或账号）
     #[oai(path = "/item/:id", method = "delete")]
-    async fn delete_item(&self, id: Path<String>, tenant_id: Query<String>, ctx: TardisContextExtractor, request: &Request) -> TardisApiResult<Void> {
+    async fn delete_item(&self, id: Path<String>, tenant_id: Query<Option<String>>, ctx: TardisContextExtractor, request: &Request) -> TardisApiResult<Void> {
         let mut funs = iam_constants::get_tardis_inst();
         try_set_real_ip_from_req_to_ctx(request, &ctx.0).await?;
         let tenant_ctx = TardisContext {
-            own_paths: tenant_id.0.clone(),
+            own_paths: tenant_id.0.clone().unwrap_or_default(),
             ..ctx.0.clone()
         };
         funs.begin().await?;
