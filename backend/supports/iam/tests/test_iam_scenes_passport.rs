@@ -800,7 +800,7 @@ pub async fn login_by_oauth2(client: &mut BIOSWebTestClient) -> TardisResult<()>
             "/cp/login/wechat-mp",
             &IamCpOAuth2LoginReq {
                 code: TrimString(code.to_string()),
-                tenant_id,
+                tenant_id: Some(tenant_id),
             },
         )
         .await;

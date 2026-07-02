@@ -44,11 +44,6 @@ pub const MENU_ROOT_SET_BUS_CODE: &str = "__menus__";
 pub const API_ROOT_SET_BUS_CODE: &str = "__apis__";
 pub const DATA_GUARD_ROOT_SET_BUS_CODE: &str = "__data_guards__";
 
-/// Platform-level virtual root node id for merged apps tree
-pub const PLATFORM_APPS_TREE_ROOT_ID: &str = "";
-/// Platform-level virtual root node display name for merged apps tree
-pub const PLATFORM_APPS_TREE_ROOT_NAME: &str = "平台";
-
 pub struct IamSetServ;
 
 impl IamSetServ {
@@ -229,8 +224,20 @@ impl IamSetServ {
         Ok(set_id)
     }
 
-    pub fn is_platform_apps_root_cate_id(cate_id: Option<&str>) -> bool {
-        matches!(cate_id, None | Some("") | Some(PLATFORM_APPS_TREE_ROOT_ID))
+    fn platform_apps_tree_root_id(funs: &TardisFunsInst) -> String {
+        funs.conf::<IamConfig>().platform_apps_tree_root_id.clone()
+    }
+
+    fn platform_apps_tree_root_name(funs: &TardisFunsInst) -> String {
+        funs.conf::<IamConfig>().platform_apps_tree_root_name.clone()
+    }
+
+    pub fn is_platform_apps_root_cate_id(cate_id: Option<&str>, funs: &TardisFunsInst) -> bool {
+        let root_id = Self::platform_apps_tree_root_id(funs);
+        match cate_id {
+            None | Some("") => true,
+            Some(s) => s == root_id.as_str(),
+        }
     }
 
     pub async fn try_get_rel_ctx_by_set_id(set_id: Option<String>, funs: &TardisFunsInst, mut ctx: TardisContext) -> TardisResult<TardisContext> {
@@ -626,7 +633,7 @@ impl IamSetServ {
     /// 组装平台层应用树：平台虚拟根 -> 租户虚拟节点 -> 各租户产品组节点。
     ///
     /// * ``parent_sys_code`` is None: full merged tree
-    /// * ``parent_sys_code`` is ``""`` or [`PLATFORM_APPS_TREE_ROOT_ID`]: platform root + tenant nodes only
+    /// * ``parent_sys_code`` is ``""`` or configured [`IamConfig::platform_apps_tree_root_id`]: platform root + tenant nodes only
     /// * ``parent_sys_code`` is a tenant id: first-level app cates under that tenant
     /// * ``parent_sys_code`` is a cate sys_code and ``tenant_id`` is set: next level under that cate in the tenant
     pub async fn get_platform_apps_tree(
@@ -637,11 +644,13 @@ impl IamSetServ {
         funs: &TardisFunsInst,
         sys_ctx: &TardisContext,
     ) -> TardisResult<RbumSetTreeResp> {
+        let root_id = Self::platform_apps_tree_root_id(funs);
+        let root_name = Self::platform_apps_tree_root_name(funs);
         // Platform root binding implies full tree; align with get_account_apps_from_all_sets.
         let only_related = only_related && !Self::account_has_platform_apps_auth(&sys_ctx.owner, funs, sys_ctx).await?;
         let tenant_id_set: HashSet<String> = tenants.iter().map(|t| t.id.clone()).collect();
 
-        if let Some(parent) = parent_sys_code.as_ref().filter(|p| !p.is_empty() && *p != PLATFORM_APPS_TREE_ROOT_ID) {
+        if let Some(parent) = parent_sys_code.as_ref().filter(|p| !p.is_empty() && *p != &root_id) {
             if tenant_id_set.contains(parent) {
                 let tenant = tenants.iter().find(|t| t.id == *parent).expect("ignore");
                 return Self::get_platform_tenant_apps_subtree(tenant, Some("".to_string()), only_related, funs, sys_ctx).await;
@@ -660,22 +669,22 @@ impl IamSetServ {
             ));
         }
 
-        if parent_sys_code.as_ref().is_some_and(|p| p.is_empty() || p == PLATFORM_APPS_TREE_ROOT_ID) {
-            let mut result = Self::build_platform_tenant_nodes_tree(tenants, sys_ctx);
-            Self::attach_platform_root_ext(&mut result, Self::fetch_platform_apps_root_ext(funs, sys_ctx).await?);
+        if parent_sys_code.as_ref().is_some_and(|p| p.is_empty() || p == &root_id) {
+            let mut result = Self::build_platform_tenant_nodes_tree(tenants, sys_ctx, &root_id, &root_name);
+            Self::attach_platform_root_ext(&mut result, Self::fetch_platform_apps_root_ext(funs, sys_ctx).await?, &root_id);
             return Ok(result);
         }
 
         let mut result = RbumSetTreeResp {
-            main: vec![Self::build_platform_root_node(sys_ctx)],
+            main: vec![Self::build_platform_root_node(sys_ctx, &root_id, &root_name)],
             ext: None,
         };
         for tenant in tenants {
             if let Some((set_id, tenant_tree)) = Self::fetch_tenant_apps_tree(tenant, None, only_related, funs, sys_ctx).await? {
-                Self::merge_tenant_apps_tree(&mut result, tenant, &set_id, tenant_tree, true);
+                Self::merge_tenant_apps_tree(&mut result, tenant, &set_id, tenant_tree, true, &root_id);
             }
         }
-        Self::attach_platform_root_ext(&mut result, Self::fetch_platform_apps_root_ext(funs, sys_ctx).await?);
+        Self::attach_platform_root_ext(&mut result, Self::fetch_platform_apps_root_ext(funs, sys_ctx).await?, &root_id);
         Ok(result)
     }
 
@@ -695,7 +704,7 @@ impl IamSetServ {
         Ok(tree.ext)
     }
 
-    fn attach_platform_root_ext(result: &mut RbumSetTreeResp, platform_ext: Option<RbumSetTreeExtResp>) {
+    fn attach_platform_root_ext(result: &mut RbumSetTreeResp, platform_ext: Option<RbumSetTreeExtResp>, root_id: &str) {
         let Some(mut src) = platform_ext else { return };
         let ext = result.ext.get_or_insert_with(|| RbumSetTreeExtResp {
             items: HashMap::new(),
@@ -704,10 +713,10 @@ impl IamSetServ {
             item_domains: HashMap::new(),
         });
         if let Some(items) = src.items.remove("") {
-            ext.items.insert(PLATFORM_APPS_TREE_ROOT_ID.to_string(), items);
+            ext.items.insert(root_id.to_string(), items);
         }
         if let Some(agg) = src.item_number_agg.remove("") {
-            ext.item_number_agg.insert(PLATFORM_APPS_TREE_ROOT_ID.to_string(), agg);
+            ext.item_number_agg.insert(root_id.to_string(), agg);
         }
         ext.items.extend(src.items);
         ext.item_number_agg.extend(src.item_number_agg);
@@ -715,13 +724,13 @@ impl IamSetServ {
         ext.item_domains.extend(src.item_domains);
     }
 
-    fn build_platform_root_node(ctx: &TardisContext) -> RbumSetTreeNodeResp {
+    fn build_platform_root_node(ctx: &TardisContext, root_id: &str, root_name: &str) -> RbumSetTreeNodeResp {
         let now = Utc::now();
         RbumSetTreeNodeResp {
-            id: PLATFORM_APPS_TREE_ROOT_ID.to_string(),
+            id: root_id.to_string(),
             sys_code: String::new(),
             bus_code: String::new(),
-            name: PLATFORM_APPS_TREE_ROOT_NAME.to_string(),
+            name: root_name.to_string(),
             icon: String::new(),
             sort: 0,
             ext: json!({"virtual":true,"scope":"platform"}).to_string(),
@@ -735,7 +744,7 @@ impl IamSetServ {
         }
     }
 
-    fn build_tenant_virtual_node(tenant: &IamTenantSummaryResp, set_id: &str) -> RbumSetTreeNodeResp {
+    fn build_tenant_virtual_node(tenant: &IamTenantSummaryResp, set_id: &str, root_id: &str) -> RbumSetTreeNodeResp {
         RbumSetTreeNodeResp {
             id: tenant.id.clone(),
             sys_code: tenant.id.clone(),
@@ -744,7 +753,7 @@ impl IamSetServ {
             icon: tenant.icon.clone(),
             sort: tenant.sort,
             ext: json!({"virtual":true,"scope":"tenant","tenant_id":tenant.id,"set_id":set_id}).to_string(),
-            pid: Some(PLATFORM_APPS_TREE_ROOT_ID.to_string()),
+            pid: Some(root_id.to_string()),
             rel: None,
             own_paths: tenant.own_paths.clone(),
             owner: tenant.owner.clone(),
@@ -754,13 +763,13 @@ impl IamSetServ {
         }
     }
 
-    fn build_platform_tenant_nodes_tree(tenants: &[IamTenantSummaryResp], ctx: &TardisContext) -> RbumSetTreeResp {
+    fn build_platform_tenant_nodes_tree(tenants: &[IamTenantSummaryResp], ctx: &TardisContext, root_id: &str, root_name: &str) -> RbumSetTreeResp {
         RbumSetTreeResp {
-            main: std::iter::once(Self::build_platform_root_node(ctx))
+            main: std::iter::once(Self::build_platform_root_node(ctx, root_id, root_name))
                 .chain(tenants.iter().map(|tenant| {
                     RbumSetTreeNodeResp {
                         ext: json!({"virtual":true,"scope":"tenant","tenant_id":tenant.id}).to_string(),
-                        ..Self::build_tenant_virtual_node(tenant, "")
+                        ..Self::build_tenant_virtual_node(tenant, "", root_id)
                     }
                 }))
                 .collect(),
@@ -780,7 +789,7 @@ impl IamSetServ {
             return Ok(RbumSetTreeResp { main: vec![], ext: None });
         };
         let mut result = RbumSetTreeResp { main: vec![], ext: None };
-        Self::merge_tenant_apps_tree(&mut result, tenant, &set_id, tenant_tree, include_tenant_node);
+        Self::merge_tenant_apps_tree(&mut result, tenant, &set_id, tenant_tree, include_tenant_node, &Self::platform_apps_tree_root_id(funs));
         Ok(result)
     }
 
@@ -811,9 +820,9 @@ impl IamSetServ {
         Ok(tree.map(|tree| (set_id, tree)))
     }
 
-    fn merge_tenant_apps_tree(result: &mut RbumSetTreeResp, tenant: &IamTenantSummaryResp, set_id: &str, tenant_tree: RbumSetTreeResp, include_tenant_node: bool) {
+    fn merge_tenant_apps_tree(result: &mut RbumSetTreeResp, tenant: &IamTenantSummaryResp, set_id: &str, tenant_tree: RbumSetTreeResp, include_tenant_node: bool, root_id: &str) {
         if include_tenant_node {
-            result.main.push(Self::build_tenant_virtual_node(tenant, set_id));
+            result.main.push(Self::build_tenant_virtual_node(tenant, set_id, root_id));
         }
         for mut node in tenant_tree.main {
             if node.pid.is_none() {
@@ -1376,7 +1385,7 @@ impl IamSetServ {
             let set_id = Self::get_default_set_id_by_ctx(&IamSetKind::Apps, funs, ctx).await?;
             return Ok((ctx.clone(), set_id, set_cate_id));
         }
-        if Self::is_platform_apps_root_cate_id(set_cate_id.as_deref()) {
+        if Self::is_platform_apps_root_cate_id(set_cate_id.as_deref(), funs) {
             let set_id = Self::ensure_platform_apps_set(funs, ctx).await?;
             return Ok((ctx.clone(), set_id, None));
         }

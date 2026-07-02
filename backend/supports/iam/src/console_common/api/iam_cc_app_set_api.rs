@@ -21,6 +21,7 @@ use crate::basic::serv::iam_cert_serv::IamCertServ;
 use crate::basic::serv::iam_set_serv::IamSetServ;
 use crate::basic::serv::iam_tenant_serv::IamTenantServ;
 use crate::iam_constants;
+use crate::iam_config::IamConfig;
 use crate::iam_enumeration::IamSetKind;
 use bios_basic::helper::request_helper::try_set_real_ip_from_req_to_ctx;
 use tardis::web::poem::Request;
@@ -182,7 +183,7 @@ impl IamCcAppSetApi {
             .await?
         };
         let platform_apps_tree = IamSetServ::get_platform_apps_tree(&tenants, parent_sys_code.0, tenant_id.0, only_related, &funs, &sys_ctx).await?;
-        result.insert("".to_string(), platform_apps_tree);
+        result.insert(funs.conf::<IamConfig>().platform_apps_tree_root_id.clone(), platform_apps_tree);
 
         ext_ctx.execute_task().await?;
         TardisResp::ok(result)

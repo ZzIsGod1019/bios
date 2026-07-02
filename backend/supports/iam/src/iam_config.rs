@@ -21,6 +21,10 @@ pub struct IamConfig {
     pub in_event: bool,
     pub invoke: InvokeConfig,
     pub app_res_data_guard_code: String,
+    /// Platform-level virtual root node id for merged apps tree
+    pub platform_apps_tree_root_id: String,
+    /// Platform-level virtual root node display name for merged apps tree
+    pub platform_apps_tree_root_name: String,
     // token -> (token_kind, account_id)
     // accessToken(token_kind = TokenOauth2) -> (token_kind, rel_iam_item_id, ak, SetCateIds)
     pub cache_key_token_info_: String,
@@ -219,6 +223,8 @@ impl Default for IamConfig {
             in_event: false,
             invoke: InvokeConfig::default(),
             app_res_data_guard_code: "5/*/app*data_guard*all".to_string(),
+            platform_apps_tree_root_id: String::new(),
+            platform_apps_tree_root_name: "平台".to_string(),
             cache_key_token_info_: "iam:cache:token:info:".to_string(),
             cache_key_oauth2_provider_token_: "iam:cache:oauth2:provider_token:".to_string(),
             cache_key_aksk_info_: "iam:cache:aksk:info:".to_string(),
