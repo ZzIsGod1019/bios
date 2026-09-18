@@ -1,12 +1,12 @@
 use async_trait::async_trait;
 use bios_basic::helper::request_helper::get_real_ip_from_ctx;
 use bios_basic::rbum::rbum_config::RbumConfigApi;
-use bios_basic::rbum::rbum_enumeration::RbumRelFromKind;
+use bios_basic::rbum::rbum_enumeration::{RbumCertStatusKind, RbumRelFromKind};
 
 use itertools::Itertools;
 use tardis::chrono::Utc;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use tardis::basic::dto::TardisContext;
 use tardis::basic::field::TrimString;
@@ -27,12 +27,14 @@ use bios_basic::rbum::serv::rbum_item_serv::{RbumItemCrudOperation, RbumItemServ
 use crate::basic::domain::iam_account;
 use crate::basic::dto::iam_account_dto::{
     AccountTenantInfo, AccountTenantInfoResp, IamAccountAddReq, IamAccountAggAddReq, IamAccountAggModifyReq, IamAccountAppInfoResp, IamAccountAttrResp, IamAccountDetailAggResp,
-    IamAccountDetailResp, IamAccountModifyReq, IamAccountSelfModifyReq, IamAccountSummaryAggResp, IamAccountSummaryResp,
+    IamAccountDetailResp, IamAccountModifyReq, IamAccountSelfModifyReq, IamAccountSummaryAggResp, IamAccountSummaryResp, IamAccountThirdPartyCertResp,
 };
-use crate::basic::dto::iam_cert_dto::{IamCertMailVCodeAddReq, IamCertPhoneVCodeAddReq, IamCertUserPwdAddReq};
+use crate::basic::dto::iam_app_dto::IamAppKind;
+use crate::basic::dto::iam_cert_dto::{IamCertLdapAddOrModifyReq, IamCertMailVCodeAddReq, IamCertPhoneVCodeAddReq, IamCertUserPwdAddReq};
 use crate::basic::dto::iam_filer_dto::{IamAccountFilterReq, IamAppFilterReq, IamRoleFilterReq, IamTenantFilterReq};
 use crate::basic::dto::iam_set_dto::IamSetItemAddReq;
 use crate::basic::serv::iam_attr_serv::IamAttrServ;
+use crate::basic::serv::iam_cert_ldap_serv::IamCertLdapServ;
 use crate::basic::serv::iam_cert_mail_vcode_serv::IamCertMailVCodeServ;
 use crate::basic::serv::iam_cert_phone_vcode_serv::IamCertPhoneVCodeServ;
 use crate::basic::serv::iam_cert_serv::IamCertServ;
@@ -42,8 +44,11 @@ use crate::basic::serv::iam_rel_serv::IamRelServ;
 use crate::basic::serv::iam_role_serv::IamRoleServ;
 use crate::basic::serv::iam_set_serv::IamSetServ;
 use crate::basic::serv::iam_tenant_serv::IamTenantServ;
+use crate::iam_config::IamBasicConfigApi;
 use crate::iam_config::{IamBasicInfoManager, IamConfig};
+use crate::iam_constants::{self, RBUM_SCOPE_LEVEL_APP};
 use crate::iam_enumeration::{IamAccountLockStateKind, IamAccountStatusKind, IamCertKernelKind, IamRelKind, IamSetKind};
+use crate::integration::ldap::account::account_result::build_account_dn;
 
 use super::clients::iam_log_client::{IamLogClient, LogParamTag};
 use super::clients::iam_search_client::IamSearchClient;
@@ -286,6 +291,9 @@ impl RbumItemCrudOperation<iam_account::ActiveModel, IamAccountAddReq, IamAccoun
         if let Some(rbum_item_rel_filter_req) = &filter.rel4 {
             Self::package_rel(query, Alias::new("rbum_rel4"), rbum_item_rel_filter_req);
         }
+        if let Some(rbum_item_rel_filter_req) = &filter.rel5 {
+            Self::package_rel(query, Alias::new("rbum_rel5"), rbum_item_rel_filter_req);
+        }
         if let Some(set_rel) = &filter.set_rel {
             Self::package_set_rel(query, Alias::new("rbum_set_rel"), set_rel);
         }
@@ -342,6 +350,21 @@ impl IamAccountServ {
             )
             .await?;
         }
+        // 当前逻辑，新增账号时添加add_req.cert_user_name.clone()为ldap的ak
+        if let Some(ldap_cert_conf) = IamCertLdapServ::get_cert_conf_by_ctx(funs, ctx).await? {
+            let ldap_config = funs.conf::<IamConfig>().ldap.clone();
+            IamCertLdapServ::add_or_modify_cert(
+                &IamCertLdapAddOrModifyReq {
+                    ldap_id: TrimString(build_account_dn(&add_req.cert_user_name.clone(), &ldap_config)),
+                    status: RbumCertStatusKind::Enabled,
+                },
+                &account_id,
+                &ldap_cert_conf.id,
+                funs,
+                ctx,
+            )
+            .await?;
+        }
         if let Some(cert_phone) = &add_req.cert_phone {
             if let Some(cert_conf) = IamCertServ::get_cert_conf_id_and_ext_opt_by_kind(&IamCertKernelKind::PhoneVCode.to_string(), Some(ctx.own_paths.clone()), funs).await? {
                 IamCertPhoneVCodeServ::add_cert(
@@ -359,7 +382,7 @@ impl IamAccountServ {
         }
         if let Some(cert_mail) = &add_req.cert_mail {
             if let Some(cert_conf) = IamCertServ::get_cert_conf_id_and_ext_opt_by_kind(&IamCertKernelKind::MailVCode.to_string(), Some(ctx.own_paths.clone()), funs).await? {
-                IamCertMailVCodeServ::add_cert(&IamCertMailVCodeAddReq { mail: cert_mail.to_string() }, &account_id, &cert_conf.id, funs, ctx).await?;
+                IamCertMailVCodeServ::add_cert_skip_activate(&IamCertMailVCodeAddReq { mail: cert_mail.to_string() }, &account_id, &cert_conf.id, funs, ctx).await?;
             }
             let _ = MailClient::async_send_pwd(cert_mail, &pwd, funs, ctx).await;
         }
@@ -656,6 +679,7 @@ impl IamAccountServ {
 
         // let org_set_id = IamSetServ::get_set_id_by_code(&IamSetServ::get_default_code(&IamSetKind::Org, &ctx.own_paths), false, funs, ctx).await?;
         let groups = IamSetServ::find_flat_set_items(&set_id, &account.id, false, funs, &mock_tenant_ctx).await?;
+        let third_party_certs = Self::find_account_third_party_certs(&account.id, funs, ctx).await?;
         let account = IamAccountDetailAggResp {
             id: account.id.clone(),
             name: if account.disabled { format!("{}(已注销)", account.name) } else { account.name },
@@ -701,6 +725,7 @@ impl IamAccountServ {
             .into_iter()
             .map(|r| (r.rel_rbum_cert_conf_name.unwrap_or("".to_string()), r.ak))
             .collect(),
+            third_party_certs,
             orgs: IamSetServ::find_set_paths(&account.id, &set_id, funs, &mock_tenant_ctx).await?.into_iter().map(|r| r.into_iter().map(|rr| rr.name).join("/")).collect(),
             exts: account_attrs
                 .into_iter()
@@ -1033,5 +1058,94 @@ impl IamAccountServ {
 
         funs.db().execute(&update_statement).await?;
         Ok(())
+    }
+
+    async fn find_account_third_party_certs(account_id: &str, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<Vec<IamAccountThirdPartyCertResp>> {
+        Ok(IamCertServ::find_3th_kind_cert(Some(account_id.to_string()), None, false, None, funs, ctx)
+            .await?
+            .into_iter()
+            .map(|cert| IamAccountThirdPartyCertResp {
+                id: cert.id,
+                supplier: cert.supplier,
+                ak: cert.ak,
+                ext: cert.ext,
+                status: cert.status,
+                start_time: cert.start_time,
+                end_time: cert.end_time,
+                rel_rbum_cert_conf_name: cert.rel_rbum_cert_conf_name,
+            })
+            .sorted_by(|a, b| a.end_time.cmp(&b.end_time))
+            .collect())
+    }
+
+    /// 获取账号在所有项目组下的应用列表
+    ///
+    /// 查询账号关联的所有 Apps 类型的 Set（排除有层级关系的），
+    /// 获取每个 Set 中的应用信息，过滤掉已在 `existing_app_ids` 中的应用。
+    /// 若关联的 Set 中存在平台层 Set，则默认拥有各租户 Set 下全部应用的权限。
+    pub async fn get_account_apps_from_all_sets(
+        account_id: &str,
+        existing_app_ids: &HashSet<String>,
+        funs: &TardisFunsInst,
+        ctx: &TardisContext,
+    ) -> TardisResult<Vec<IamAccountAppInfoResp>> {
+        let sets = IamSetServ::find_sets_by_account_id_and_kind(account_id, &IamSetKind::Apps, funs, ctx).await?;
+        let mut seen_ids = HashSet::new();
+        let sets: Vec<_> = sets.into_iter().filter(|set| !set.own_paths.contains('/')).filter(|set| seen_ids.insert(set.id.clone())).collect();
+        let has_platform_set = IamSetServ::account_has_platform_apps_auth(account_id, funs, ctx).await?;
+
+        let mut apps = Vec::new();
+        let mut app_role_read = HashMap::new();
+        app_role_read.insert(funs.iam_basic_role_app_read_id(), iam_constants::RBUM_ITEM_NAME_APP_READ_ROLE.to_string());
+
+        for set in sets {
+            // 平台层 Set 仅作为"拥有全部应用权限"的标记，实际应用分布在各租户 Set 中
+            if has_platform_set && set.own_paths.is_empty() {
+                continue;
+            }
+            let tenant_ctx = TardisContext {
+                own_paths: set.own_paths.clone(),
+                ..ctx.clone()
+            };
+            let app_items = if has_platform_set {
+                IamAppServ::find_items(
+                    &IamAppFilterReq {
+                        basic: RbumBasicFilterReq {
+                            with_sub_own_paths: true,
+                            enabled: Some(true),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                    None,
+                    None,
+                    funs,
+                    &tenant_ctx,
+                )
+                .await?
+                .into_iter()
+                .map(|app| (app.id, app.name))
+                .collect()
+            } else {
+                IamSetServ::get_app_with_auth_by_account(&set.id, account_id, funs, &tenant_ctx).await?
+            };
+
+            for (app_id, app_name) in app_items {
+                if existing_app_ids.contains(&app_id) {
+                    continue;
+                }
+                apps.push(IamAccountAppInfoResp {
+                    app_id: app_id.clone(),
+                    app_name: app_name.clone(),
+                    app_kind: IamAppKind::Product,
+                    app_own_paths: format!("{}/{}", tenant_ctx.own_paths, app_id),
+                    app_icon: "".to_string(),
+                    roles: app_role_read.clone(),
+                    groups: HashMap::default(),
+                });
+            }
+        }
+
+        Ok(apps)
     }
 }

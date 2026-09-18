@@ -348,6 +348,7 @@ impl FlowLogClient {
             ("ITER", "迭代"),
             ("TICKET", "工单"),
             ("REQ", "需求"),
+            ("PROJ_REQ", "合同需求"),
             ("TASK", "任务"),
             ("ISSUE", "缺陷"),
             ("CTS", "转测单"),
@@ -355,6 +356,7 @@ impl FlowLogClient {
             ("TS", "测试阶段"),
             ("TC", "用例"),
             ("REVIEW", "评审"),
+            ("VERSION", "版本"),
         ]);
         flow_tag_map.get(tag).map_or("".to_string(), |val| val.to_string())
     }
@@ -365,6 +367,7 @@ impl FlowLogClient {
             ("PROJECT_MS", "idp_feed_project_ms"),
             ("ITER", "idp_feed_iter"),
             ("REQ", "idp_feed_req"),
+            ("PROJ_REQ", "idp_feed_req"),
             ("TASK", "idp_feed_task"),
             ("ISSUE", "idp_test_issue"),
             ("CTS", "idp_test_cts"),
@@ -373,6 +376,7 @@ impl FlowLogClient {
             ("FLOW", "flow_approval_edit"),
             ("TC", "idp_test_case"),
             ("REVIEW", "idp_feed_review"),
+            ("VERSION", "idp_release_version"),
         ]);
         flow_tag_map.get(tag).map_or("".to_string(), |val| val.to_string())
     }

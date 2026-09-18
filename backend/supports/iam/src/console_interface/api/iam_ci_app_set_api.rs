@@ -1,8 +1,9 @@
-use bios_basic::rbum::dto::rbum_set_dto::RbumSetTreeResp;
+use bios_basic::rbum::dto::rbum_set_dto::{RbumSetSummaryResp, RbumSetTreeResp};
 use bios_basic::rbum::helper::rbum_scope_helper::check_without_owner_and_unsafe_fill_ctx;
 use bios_basic::rbum::rbum_enumeration::RbumSetCateLevelQueryKind;
 use bios_basic::rbum::serv::rbum_crud_serv::RbumCrudOperation;
 use bios_basic::rbum::serv::rbum_set_serv::RbumSetItemServ;
+use std::str::FromStr;
 use tardis::web::context_extractor::TardisContextExtractor;
 use tardis::web::poem_openapi;
 use tardis::web::poem_openapi::param::Query;
@@ -58,6 +59,26 @@ impl IamCiAppSetApi {
             &ctx,
         )
         .await?;
+        ctx.execute_task().await?;
+        TardisResp::ok(result)
+    }
+
+    /// Find Sets By Account Id And Set Kind
+    /// 根据账号ID和集合类型查找集合
+    #[oai(path = "/sets", method = "get")]
+    async fn find_sets(
+        &self,
+        account_id: Query<String>,
+        set_kind: Query<IamSetKind>,
+        mut ctx: TardisContextExtractor,
+        request: &Request,
+    ) -> TardisApiResult<Vec<RbumSetSummaryResp>> {
+        let funs = iam_constants::get_tardis_inst();
+        check_without_owner_and_unsafe_fill_ctx(request, &funs, &mut ctx.0)?;
+        let ctx = IamCertServ::use_sys_or_tenant_ctx_unsafe(ctx.0)?;
+        try_set_real_ip_from_req_to_ctx(request, &ctx).await?;
+
+        let result = IamSetServ::find_sets_by_account_id_and_kind(&account_id.0, &set_kind.0, &funs, &ctx).await?;
         ctx.execute_task().await?;
         TardisResp::ok(result)
     }

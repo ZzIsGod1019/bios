@@ -5,13 +5,10 @@ use bios_basic::rbum::dto::rbum_filer_dto::RbumBasicFilterReq;
 use rust_decimal::{prelude::FromPrimitive, Decimal};
 use serde_json::{json, Value};
 use tardis::{
-    basic::{dto::TardisContext, result::TardisResult},
-    chrono::{SecondsFormat, Utc},
-    db::sea_orm::{
+    TardisFunsInst, basic::{dto::TardisContext, result::TardisResult}, chrono::{Local, SecondsFormat, Utc}, db::sea_orm::{
         self,
         sea_query::{Expr, Query},
-    },
-    TardisFunsInst,
+    }
 };
 
 use crate::{
@@ -151,7 +148,7 @@ impl FlowEventServ {
                 if let Some(left_value) = current_vars.get(&condition.left_value) {
                     Ok(condition.relevance_relation.check_conform(
                         left_value.as_str().unwrap_or(left_value.to_string().as_str()).to_string(),
-                        Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+                        Local::now().to_rfc3339_opts(SecondsFormat::Millis, true),
                     ))
                 } else {
                     Ok(false)
@@ -219,6 +216,7 @@ impl FlowEventServ {
             .iter()
             .find(|trans| trans.id == flow_transition_id)
             .ok_or_else(|| funs.err().not_found("flow_inst", "transfer", "no transferable state", "404-flow-inst-transfer-state-not-found"))?;
+        let new_inst = FlowInstServ::get(&flow_inst_detail.id, funs, ctx).await?;
         let prev_flow_state = FlowStateServ::get_item(
             &next_flow_transition.from_flow_state_id,
             &FlowStateFilterReq {
@@ -233,7 +231,7 @@ impl FlowEventServ {
         )
         .await?;
         let next_flow_state = FlowStateServ::get_item(
-            &next_flow_transition.to_flow_state_id,
+            &new_inst.current_state_id,
             &FlowStateFilterReq {
                 basic: RbumBasicFilterReq {
                     with_sub_own_paths: true,
@@ -273,7 +271,7 @@ impl FlowEventServ {
                             if !resp.rel_bus_objs.is_empty() {
                                 for rel_bus_obj_id in resp.rel_bus_objs.pop().unwrap_or_default().rel_bus_obj_ids {
                                     let inst_id =
-                                        FlowInstServ::get_inst_ids_by_rel_business_obj_id(vec![rel_bus_obj_id.clone()], Some(true), funs, ctx).await?.pop().unwrap_or_default();
+                                        FlowInstServ::get_inst_ids_by_rel_business_obj_id(vec![rel_bus_obj_id.clone()], true, funs, ctx).await?.pop().unwrap_or_default();
                                     let child_inst_detail = FlowInstServ::get(&inst_id, funs, ctx).await?;
                                     let var_change_info = Self::prepare_var_change_info(&child_inst_detail, &change_info, funs, ctx).await?;
                                     FlowExternalServ::do_modify_field(
@@ -377,7 +375,7 @@ impl FlowEventServ {
         if let Some(changed_kind) = &result.changed_kind {
             match changed_kind {
                 FlowTransitionActionByVarChangeInfoChangedKind::AutoGetOperateTime => {
-                    result.changed_val = Some(json!(Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)));
+                    result.changed_val = Some(json!(Local::now().to_rfc3339_opts(SecondsFormat::Millis, true)));
                     result.changed_kind = Some(FlowTransitionActionByVarChangeInfoChangedKind::ChangeContent);
                 }
                 FlowTransitionActionByVarChangeInfoChangedKind::AddOrSub => {
@@ -462,7 +460,7 @@ impl FlowEventServ {
                             rel_tags.push((condition_item.obj_tag.clone().unwrap_or_default(), condition_item.obj_tag_rel_kind.clone()));
                         }
                     }
-                    let inst_id = FlowInstServ::get_inst_ids_by_rel_business_obj_id(vec![rel_obj_id.clone()], Some(true), funs, ctx).await?.pop().unwrap_or_default();
+                    let inst_id = FlowInstServ::get_inst_ids_by_rel_business_obj_id(vec![rel_obj_id.clone()], true, funs, ctx).await?.pop().unwrap_or_default();
                     let tag = if change_info.obj_tag_rel_kind == Some(TagRelKind::ParentOrSub) {
                         &flow_model.tag
                     } else {
@@ -499,7 +497,7 @@ impl FlowEventServ {
             result_rel_obj_ids = result_rel_obj_ids.into_iter().filter(|result_rel_obj_id| !mismatch_rel_obj_ids.contains(result_rel_obj_id)).collect_vec();
         }
 
-        let result = FlowInstServ::get_inst_ids_by_rel_business_obj_id(result_rel_obj_ids, Some(true), funs, ctx).await?;
+        let result = FlowInstServ::get_inst_ids_by_rel_business_obj_id(result_rel_obj_ids, true, funs, ctx).await?;
         Ok(result)
     }
 
@@ -524,9 +522,9 @@ impl FlowEventServ {
                     .and_where(Expr::col(flow_inst::Column::Main).eq(true)),
             )
             .await?;
-        if rel_bus_obj_ids.len() != rel_insts.len() {
-            return Err(funs.err().not_found("flow_inst", "do_post_change", "some flow instances not found", "404-flow-inst-not-found"));
-        }
+        // if rel_bus_obj_ids.len() != rel_insts.len() {
+        //     return Err(funs.err().not_found("flow_inst", "do_post_change", "some flow instances not found", "404-flow-inst-not-found"));
+        // }
         Ok(rel_insts
             .iter()
             .filter(|inst_result| {

@@ -5,7 +5,9 @@ use bios_basic::rbum::helper::rbum_scope_helper::check_without_owner_and_unsafe_
 use bios_basic::rbum::serv::rbum_item_serv::RbumItemCrudOperation;
 use itertools::Itertools;
 use tardis::basic::dto::TardisContext;
-use tardis::chrono::Utc;
+use tardis::basic::error::TardisError;
+use tardis::basic::result::TardisResult;
+use tardis::chrono::{DateTime, Duration, Utc};
 use tardis::log::{debug, warn};
 use tardis::serde_json::Value;
 use tardis::web::context_extractor::TardisContextExtractor;
@@ -24,8 +26,11 @@ use crate::dto::flow_inst_dto::{
 use crate::dto::flow_model_version_dto::FlowModelVersionFilterReq;
 use crate::dto::flow_state_dto::FlowSysStateKind;
 use crate::dto::flow_transition_dto::FlowTransitionFilterReq;
+use crate::flow_config::FlowConfig;
 use crate::flow_constants;
 use crate::helper::{loop_check_helper, task_handler_helper};
+use crate::serv::clients::cache_client::{CacheSpinLockConfig, FlowCacheClient};
+use crate::serv::clients::reach_client::FlowReachClient;
 use crate::serv::clients::search_client::FlowSearchClient;
 use crate::serv::flow_event_serv::FlowEventServ;
 use crate::serv::flow_inst_serv::FlowInstServ;
@@ -45,7 +50,7 @@ impl FlowCiInstApi {
         let mut funs = flow_constants::get_tardis_inst();
         check_without_owner_and_unsafe_fill_ctx(request, &funs, &mut ctx.0)?;
         funs.begin().await?;
-        let result = FlowInstServ::start(&add_req.0, None, &funs, &ctx.0).await?;
+        let result = FlowInstServ::start(&add_req.0, add_req.0.current_state_name.clone(), &funs, &ctx.0).await?;
         funs.commit().await?;
         task_handler_helper::execute_async_task(&ctx.0).await?;
         ctx.0.execute_task().await?;
@@ -60,7 +65,7 @@ impl FlowCiInstApi {
         let mut funs = flow_constants::get_tardis_inst();
         check_without_owner_and_unsafe_fill_ctx(request, &funs, &mut ctx.0)?;
         funs.begin().await?;
-        let inst_id = FlowInstServ::start(&add_req.0, None, &funs, &ctx.0).await?;
+        let inst_id = FlowInstServ::start(&add_req.0, add_req.0.current_state_name.clone(), &funs, &ctx.0).await?;
         let result = FlowInstServ::get(&inst_id, &funs, &ctx.0).await?;
         funs.commit().await?;
         task_handler_helper::execute_async_task(&ctx.0).await?;
@@ -105,11 +110,16 @@ impl FlowCiInstApi {
     async fn find_state_and_next_transitions(
         &self,
         find_req: Json<Vec<FlowInstFindStateAndTransitionsReq>>,
+        tenant_id: Query<Option<String>>,
+        app_id: Query<Option<String>>,
         mut ctx: TardisContextExtractor,
         request: &Request,
     ) -> TardisApiResult<Vec<FlowInstFindStateAndTransitionsResp>> {
         let funs = flow_constants::get_tardis_inst();
         check_without_owner_and_unsafe_fill_ctx(request, &funs, &mut ctx.0)?;
+        if let (Some(tenant_id), Some(app_id)) = (tenant_id.0, app_id.0) {
+            ctx.0.own_paths = format!("{}/{}", tenant_id, app_id);
+        }
         let result = FlowInstServ::find_state_and_next_transitions(&find_req.0, &funs, &ctx.0).await?;
         task_handler_helper::execute_async_task(&ctx.0).await?;
         ctx.0.execute_task().await?;
@@ -131,6 +141,78 @@ impl FlowCiInstApi {
         TardisResp::ok(Void {})
     }
 
+    /// Delete Instance By Business ID And Tag
+    ///
+    /// 根据业务ID和tag删除实例
+    #[oai(path = "/remove", method = "delete")]
+    async fn delete_by_obj_id_and_tag(
+        &self,
+        tag: Query<String>,
+        rel_business_obj_id: Query<String>,
+        mut ctx: TardisContextExtractor,
+        request: &Request,
+    ) -> TardisApiResult<Void> {
+        let mut funs = flow_constants::get_tardis_inst();
+        check_without_owner_and_unsafe_fill_ctx(request, &funs, &mut ctx.0)?;
+        funs.begin().await?;
+        FlowInstServ::delete_by_obj_id_and_tag(&tag.0, &rel_business_obj_id.0, &funs, &ctx.0).await?;
+        funs.commit().await?;
+        task_handler_helper::execute_async_task(&ctx.0).await?;
+        ctx.0.execute_task().await?;
+        let funs = flow_constants::get_tardis_inst();
+        FlowInstServ::do_delete_by_obj_id_and_tag(&tag.0, &rel_business_obj_id.0, &funs, &ctx.0).await?;
+        TardisResp::ok(Void {})
+    }
+
+    /// Review Expiry Remind
+    ///
+    /// 评审到期提醒：获取 sys_state=Progress、tag=REVIEW、main=true 的实例，若 create_vars.review_end_time 距当前不足 24 小时则发送提醒
+    #[oai(path = "/review_expiry_remind", method = "post")]
+    async fn review_expiry_remind(&self, mut ctx: TardisContextExtractor, request: &Request) -> TardisApiResult<Void> {
+        let funs = flow_constants::get_tardis_inst();
+        check_without_owner_and_unsafe_fill_ctx(request, &funs, &mut ctx.0)?;
+        let insts = FlowInstServ::find_detail_items(
+            &FlowInstFilterReq {
+                with_sub: Some(true),
+                current_state_sys_kind: Some(FlowSysStateKind::Progress),
+                tags: Some(vec!["REVIEW".to_string()]),
+                main: Some(true),
+                finish: Some(false),
+                ..Default::default()
+            },
+            &funs,
+            &ctx.0,
+        )
+        .await?;
+        let now = Utc::now();
+        let threshold = Duration::hours(24);
+        for inst in insts {
+            let Some(create_vars) = inst.create_vars.as_ref() else {
+                continue;
+            };
+            let Some(review_end_time_val) = create_vars.get("review_end_time") else {
+                continue;
+            };
+            let review_end_time_str = match review_end_time_val.as_str() {
+                Some(s) => s,
+                None => continue,
+            };
+            // 实际存储格式示例: "2026-01-30T00:00:00+08:00" (RFC3339)
+            let Ok(review_end_time) = DateTime::parse_from_rfc3339(review_end_time_str) else {
+                warn!("review_end_time parse failed: inst_id={}, value={}", inst.id, review_end_time_str);
+                continue;
+            };
+            let review_end_time_utc = review_end_time.with_timezone(&Utc);
+            let remaining = review_end_time_utc - now;
+            if remaining <= threshold && remaining > Duration::zero() {
+                // FlowReachClient::send_remind_approve_finish(&inst.id, &ctx.0, &funs).await?;
+            }
+        }
+        task_handler_helper::execute_async_task(&ctx.0).await?;
+        ctx.0.execute_task().await?;
+        TardisResp::ok(Void {})
+    }
+
     /// Transfer State By State Id
     ///
     /// 流转
@@ -139,24 +221,37 @@ impl FlowCiInstApi {
         &self,
         flow_inst_id: Path<String>,
         transfer_req: Json<FlowInstTransferReq>,
+        tenant_id: Query<Option<String>>,
+        app_id: Query<Option<String>>,
         mut ctx: TardisContextExtractor,
         request: &Request,
     ) -> TardisApiResult<FlowInstTransferResp> {
         let funs = flow_constants::get_tardis_inst();
         check_without_owner_and_unsafe_fill_ctx(request, &funs, &mut ctx.0)?;
-        let mut transfer = transfer_req.0;
-        let inst = FlowInstServ::get(&flow_inst_id.0, &funs, &ctx.0).await?;
-        FlowInstServ::check_transfer_vars(&inst, &mut transfer, &funs, &ctx.0).await?;
-        let result = FlowInstServ::transfer(
-            &inst,
-            &transfer,
-            false,
-            FlowExternalCallbackOp::Default,
-            loop_check_helper::InstancesTransition::default(),
-            &ctx.0,
-            &funs,
-        )
-        .await?;
+        if let (Some(tenant_id), Some(app_id)) = (tenant_id.0, app_id.0) {
+            ctx.0.own_paths = format!("{}/{}", tenant_id, app_id);
+        }
+        let lock_key = format!("flow:spin:transfer:{}", flow_inst_id.0);
+        let token = FlowCacheClient::spin_lock_acquire(&lock_key, &funs, &CacheSpinLockConfig::default()).await?;
+        let try_result: TardisResult<FlowInstTransferResp> = {
+            let mut transfer = transfer_req.0;
+            let inst = FlowInstServ::get(&flow_inst_id.0, &funs, &ctx.0).await?;
+            FlowInstServ::check_transfer_vars(&inst, &mut transfer, &funs, &ctx.0).await?;
+            let result = FlowInstServ::transfer(
+                &inst,
+                &transfer,
+                false,
+                FlowExternalCallbackOp::Default,
+                loop_check_helper::InstancesTransition::default(),
+                &ctx.0,
+                &funs,
+            )
+            .await?;
+            Ok(result)
+        };
+        let funs_cache = flow_constants::get_tardis_inst();
+        let _ = FlowCacheClient::spin_lock_release(&lock_key, &token, &funs_cache).await;
+        let result = try_result?;
         task_handler_helper::execute_async_task(&ctx.0).await?;
         ctx.0.execute_task().await?;
         TardisResp::ok(result)
@@ -257,7 +352,7 @@ impl FlowCiInstApi {
     async fn bind(&self, add_req: Json<FlowInstBindReq>, mut ctx: TardisContextExtractor, request: &Request) -> TardisApiResult<String> {
         let mut funs = flow_constants::get_tardis_inst();
         check_without_owner_and_unsafe_fill_ctx(request, &funs, &mut ctx.0)?;
-        let inst_id = FlowInstServ::get_inst_ids_by_rel_business_obj_id(vec![add_req.0.rel_business_obj_id.clone()], Some(true), &funs, &ctx.0).await?.pop();
+        let inst_id = FlowInstServ::get_inst_ids_by_rel_business_obj_id(vec![add_req.0.rel_business_obj_id.clone()], true, &funs, &ctx.0).await?.pop();
         let result = if let Some(inst_id) = inst_id {
             inst_id
         } else {
@@ -312,7 +407,7 @@ impl FlowCiInstApi {
         let funs = flow_constants::get_tardis_inst();
         check_without_owner_and_unsafe_fill_ctx(request, &funs, &mut ctx.0)?;
         let rel_business_obj_ids: Vec<_> = obj_ids.0.split(',').map(|id| id.to_string()).collect();
-        let inst_ids = FlowInstServ::get_inst_ids_by_rel_business_obj_id(rel_business_obj_ids, Some(true), &funs, &ctx.0).await?;
+        let inst_ids = FlowInstServ::get_inst_ids_by_rel_business_obj_id(rel_business_obj_ids, true, &funs, &ctx.0).await?;
         let mut result = vec![];
         for inst_id in inst_ids {
             if let Ok(inst_detail) = FlowInstServ::get(&inst_id, &funs, &ctx.0).await {
@@ -376,9 +471,17 @@ impl FlowCiInstApi {
         warn!("ci inst batch_operate flow_inst_id: {:?}, req: {:?}", flow_inst_id, operate_req);
         let mut funs = flow_constants::get_tardis_inst();
         check_without_owner_and_unsafe_fill_ctx(request, &funs, &mut ctx.0)?;
-        funs.begin().await?;
-        FlowInstServ::batch_operate(&flow_inst_id.0, &operate_req.0, &funs, &ctx.0).await?;
-        funs.commit().await?;
+        let lock_key = format!("flow:spin:batch_operate:{}:{}", ctx.0.own_paths, flow_inst_id.0);
+        let token = FlowCacheClient::spin_lock_acquire(&lock_key, &funs, &CacheSpinLockConfig::default()).await?;
+        let try_result: TardisResult<()> = {
+            funs.begin().await?;
+            FlowInstServ::batch_operate(&flow_inst_id.0, &operate_req.0, &funs, &ctx.0).await?;
+            funs.commit().await?;
+            Ok(())
+        };
+        let funs_cache = flow_constants::get_tardis_inst();
+        let _ = FlowCacheClient::spin_lock_release(&lock_key, &token, &funs_cache).await;
+        try_result?;
         task_handler_helper::execute_async_task(&ctx.0).await?;
         ctx.0.execute_task().await?;
 
@@ -464,6 +567,7 @@ impl FlowCiInstApi {
         current_state_id: Query<Option<String>>,
         current_state_sys_kind: Query<Option<FlowSysStateKind>>,
         with_sub: Query<Option<bool>>,
+        is_child: Query<Option<bool>>,
         page_number: Query<u32>,
         page_size: Query<u32>,
         mut ctx: TardisContextExtractor,
@@ -555,6 +659,10 @@ impl FlowCiInstApi {
     ) -> TardisApiResult<Void> {
         let mut funs = flow_constants::get_tardis_inst();
         check_without_owner_and_unsafe_fill_ctx(request, &funs, &mut ctx.0)?;
+        let lock_key = format!("flow:spin:transfer:{}", flow_inst_id.0);
+        if FlowCacheClient::spin_lock_exists(&lock_key, &funs).await? {
+            return Err(funs.err().conflict("flow_inst", "modify_inst_artifacts", "instance is locked by transfer", "409-flow-inst-transfer-lock").into());
+        }
         funs.begin().await?;
         FlowInstServ::modify_inst_artifacts_with_validation(&flow_inst_id.0, &modify_req.0, &funs, &ctx.0).await?;
         funs.commit().await?;
@@ -586,10 +694,10 @@ impl FlowCiInstApi {
                     inst_id.clone(),
                     ModifyObjSearchExtReq {
                         tag: tag.clone(),
-                        status: None,
+                        current_state_id: None,
                         rel_state: None,
                         rel_transition_state_name: None,
-                        current_state_color: None,
+                        ..Default::default()
                     },
                 );
             }
@@ -599,6 +707,66 @@ impl FlowCiInstApi {
             processed_count += chunk.len() as u32;
         }
         
+        task_handler_helper::execute_async_task(&ctx.0).await?;
+        ctx.0.execute_task().await?;
+        TardisResp::ok(processed_count)
+    }
+
+    /// 批量同步主实例搜索扩展信息（脚本）
+    ///
+    /// 获取所有 main=true 的实例，按200个分页，同步调用 batch_modify_business_obj_search_ext 更新 current_state_id 和 current_state_sort
+    #[oai(path = "/batch_sync_main_inst_search_ext_script", method = "post")]
+    async fn batch_sync_main_inst_search_ext_script(&self, page_number: Query<Option<u32>>, mut ctx: TardisContextExtractor, request: &Request) -> TardisApiResult<u32> {
+        let funs = flow_constants::get_tardis_inst();
+        check_without_owner_and_unsafe_fill_ctx(request, &funs, &mut ctx.0)?;
+
+        const PAGE_SIZE: u32 = 200;
+        let filter = FlowInstFilterReq {
+            with_sub: Some(true),
+            main: Some(true),
+            ..Default::default()
+        };
+        let mut page_number = if let Some(page_number) = page_number.0 {
+            page_number
+        } else {
+            1u32
+        };
+        let mut processed_count = 0u32;
+
+        loop {
+            let page = FlowInstServ::paginate_detail_items(&filter, page_number, PAGE_SIZE, None, Some(true), &funs, &ctx.0).await?;
+            if page.records.is_empty() {
+                break;
+            }
+            let rel_business_obj_ids = page.records.iter().map(|inst| inst.rel_business_obj_id.clone()).unique().collect_vec();
+            let rel_ids_with_unfinished_non_main =
+                FlowInstServ::find_rel_business_obj_ids_with_unfinished_non_main_inst(rel_business_obj_ids, &funs, &ctx.0).await?;
+            let approving_state_id = funs.conf::<FlowConfig>().specifed_approving_state_id.clone();
+            let mut items = HashMap::new();
+            for inst in &page.records {
+                let (current_state_id, current_state_sort) = if rel_ids_with_unfinished_non_main.contains(&inst.rel_business_obj_id) {
+                    (Some(approving_state_id.clone()), Some(-1))
+                } else {
+                    (Some(inst.current_state_id.clone()), inst.current_state_ext.as_ref().map(|ext| ext.sort))
+                };
+                items.insert(
+                    inst.rel_business_obj_id.clone(),
+                    ModifyObjSearchExtReq {
+                        tag: inst.tag.clone(),
+                        current_state_id,
+                        current_state_sort,
+                        ..Default::default()
+                    },
+                );
+            }
+            FlowSearchClient::batch_modify_business_obj_search_ext(&items, &funs, &ctx.0).await?;
+            processed_count += page.records.len() as u32;
+            if page_number as u64 * PAGE_SIZE as u64 >= page.total_size {
+                break;
+            }
+            page_number += 1;
+        }
+
         task_handler_helper::execute_async_task(&ctx.0).await?;
         ctx.0.execute_task().await?;
         TardisResp::ok(processed_count)

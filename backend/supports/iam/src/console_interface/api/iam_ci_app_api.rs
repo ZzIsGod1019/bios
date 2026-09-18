@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::basic::dto::iam_app_dto::{IamAppAggAddReq, IamAppAggModifyReq};
+use crate::basic::dto::iam_app_dto::{IamAppAggAddReq, IamAppAggModifyReq, IamAppBatchModifySetCateReq};
 use crate::basic::dto::iam_filer_dto::IamAppFilterReq;
 use crate::basic::serv::iam_app_serv::IamAppServ;
 
@@ -18,6 +18,7 @@ use bios_basic::rbum::serv::rbum_crud_serv::RbumCrudOperation;
 use bios_basic::rbum::serv::rbum_item_serv::RbumItemCrudOperation;
 use bios_basic::rbum::serv::rbum_set_serv::RbumSetItemServ;
 use tardis::futures_util::future::join_all;
+use tardis::tokio;
 use tardis::web::context_extractor::TardisContextExtractor;
 use tardis::web::poem_openapi;
 
@@ -267,6 +268,20 @@ impl IamCiAppApi {
         TardisResp::ok(result)
     }
 
+    /// Batch Modify App Set Category
+    /// 批量修改应用集合分类
+    #[oai(path = "/set_cate/batch", method = "put")]
+    async fn batch_modify_set_cate(&self, modify_req: Json<IamAppBatchModifySetCateReq>, mut ctx: TardisContextExtractor, request: &Request) -> TardisApiResult<Void> {
+        let mut funs = iam_constants::get_tardis_inst();
+        check_without_owner_and_unsafe_fill_ctx(request, &funs, &mut ctx.0)?;
+        try_set_real_ip_from_req_to_ctx(request, &ctx.0).await?;
+        funs.begin().await?;
+        IamAppServ::batch_modify_set_cate(&modify_req.0.app_ids, &modify_req.0.set_cate_id, &funs, &ctx.0).await?;
+        funs.commit().await?;
+        ctx.0.execute_task().await?;
+        TardisResp::ok(Void {})
+    }
+
     /// Add App Rel Account
     /// 添加应用关联账号
     #[oai(path = "/:id/account/:account_id", method = "put")]
@@ -289,42 +304,21 @@ impl IamCiAppApi {
         check_without_owner_and_unsafe_fill_ctx(request, &funs, &mut ctx.0)?;
         try_set_real_ip_from_req_to_ctx(request, &ctx.0).await?;
         funs.begin().await?;
-        let app_ids = ids.0.split(',').collect::<Vec<_>>();
-        let account_ids = account_ids.0.split(',').collect::<Vec<_>>();
-        
-        // 并发处理每个 app_id
-        let tasks = app_ids.into_iter().map(|app_id| {
-            let app_id = app_id.to_string();
-            let account_ids = account_ids.clone();
-            let ctx_clone = ctx.0.clone();
-            let funs_ref = &funs;
-            
-            async move {
-                let mock_app_ctx = IamCertServ::try_use_app_ctx(ctx_clone, Some(app_id.clone()))?;
-                
-                // 并发处理每个 account_id 的删除操作
-                let delete_tasks: Vec<_> = account_ids
-                    .iter()
-                    .map(|account_id| {
-                        let app_id = app_id.clone();
-                        let account_id = account_id.to_string();
-                        let mock_app_ctx = &mock_app_ctx;
-                        let funs_ref = funs_ref;
-                        
-                        async move {
-                            IamAppServ::delete_rel_account(&app_id, &account_id, funs_ref, mock_app_ctx).await
-                        }
-                    })
-                    .collect();
-                
-                join_all(delete_tasks).await.into_iter().collect::<Result<Vec<_>, _>>()?;
-                mock_app_ctx.execute_task().await?;
-                
-                Ok::<(), tardis::basic::error::TardisError>(())
+        let app_ids = ids.0.split(',').map(|id| id.to_string()).collect::<Vec<_>>();
+        let account_ids = account_ids.0.split(',').map(|id| id.to_string()).collect::<Vec<_>>();
+        let ctx_clone = ctx.0.clone();
+        tardis::tokio::spawn(async move {
+            let funs = iam_constants::get_tardis_inst();
+            for app_id in app_ids {
+                if let Ok(mock_app_ctx) = IamCertServ::try_use_app_ctx(ctx_clone.clone(), Some(app_id.to_string())) {
+                    for account_id in account_ids.clone() {
+                        let _ = IamAppServ::delete_rel_account(&app_id, &account_id, &funs, &mock_app_ctx).await;
+                    }
+                    mock_app_ctx.execute_task().await.unwrap_or_default();
+                }
             }
+            ctx_clone.execute_task().await.unwrap_or_default();
         });
-        
-        join_all(tasks).await.into_iter().collect::<Result<Vec<_>, _>>()?;
 
         funs.commit().await?;
         ctx.0.execute_task().await?;

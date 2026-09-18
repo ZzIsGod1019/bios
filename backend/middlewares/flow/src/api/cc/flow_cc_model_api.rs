@@ -28,6 +28,19 @@ pub struct FlowCcModelApi;
 /// Flow model process API
 #[poem_openapi::OpenApi(prefix_path = "/cc/model")]
 impl FlowCcModelApi {
+    /// [临时脚本] 批量处理重复的状态排序
+    ///
+    /// 查询所有 main=true 的模型，对存在重复 sort 的模型按现有顺序重排为 1, 2, 3... 并持久化。
+    /// 返回已修复的模型 ID 列表。
+    #[oai(path = "/script/fix_duplicate_state_sort", method = "post")]
+    async fn script_fix_duplicate_state_sort(&self, ctx: TardisContextExtractor, _request: &Request) -> TardisApiResult<Vec<String>> {
+        let mut funs = flow_constants::get_tardis_inst();
+        let result = FlowModelServ::script_fix_duplicate_main_model_state_sort(&funs, &ctx.0).await?;
+        task_handler_helper::execute_async_task(&ctx.0).await?;
+        ctx.0.execute_task().await?;
+        TardisResp::ok(result)
+    }
+
     /// Add Model
     ///
     /// 添加模型
@@ -155,6 +168,7 @@ impl FlowCcModelApi {
         rel_template_id: Query<Option<String>>,
         main: Query<Option<bool>>,
         with_sub: Query<Option<bool>>,
+        is_parent_show: Query<Option<bool>>,
         page_number: Query<u32>,
         page_size: Query<u32>,
         desc_by_create: Query<Option<bool>>,
@@ -163,23 +177,36 @@ impl FlowCcModelApi {
         _request: &Request,
     ) -> TardisApiResult<TardisPage<FlowModelDetailResp>> {
         let funs = flow_constants::get_tardis_inst();
-        let result = FlowModelServ::paginate_detail_items(
-            &FlowModelFilterReq {
-                basic: RbumBasicFilterReq {
-                    ids: flow_model_ids.0.map(|ids| ids.split(',').map(|id| id.to_string()).collect::<Vec<String>>()),
-                    own_paths: if rel_template_id.0.is_some() { Some("".to_string()) } else { None },
-                    name: name.0,
-                    with_sub_own_paths: with_sub.0.unwrap_or(false),
-                    enabled: enabled.0,
-                    ..Default::default()
-                },
-                main: main.0,
-                rel_template_id: rel_template_id.0,
-                tags: tag.0.map(|tag| vec![tag]),
-                status: status.0,
-                kinds: kind.0.map(|s| vec![s]),
+        let mut filter = FlowModelFilterReq {
+            basic: RbumBasicFilterReq {
+                ids: flow_model_ids.0.map(|ids| ids.split(',').map(|id| id.to_string()).collect::<Vec<String>>()),
+                own_paths: if rel_template_id.0.is_some() { Some("".to_string()) } else { None },
+                name: name.0,
+                with_sub_own_paths: with_sub.0.unwrap_or(false),
+                enabled: enabled.0,
                 ..Default::default()
             },
+            main: main.0,
+            rel_template_id: rel_template_id.0,
+            tags: tag.0.map(|tag| vec![tag]),
+            status: status.0,
+            kinds: kind.0.map(|s| vec![s]),
+            ..Default::default()
+        };
+        // 此处特殊处理，只展示父类已启用的模板
+        if is_parent_show.0.unwrap_or(false) {
+            let models = FlowModelServ::find_items(
+                &filter,
+                None,
+                None,
+                &funs,
+                &ctx.0,
+            )
+            .await?;
+            filter.basic.ids = Some(models.into_iter().filter(|m| m.rel_model_id.is_empty() || (!m.rel_model_id.is_empty() && m.status == FlowModelStatus::Enabled)).map(|m| m.id).collect_vec())
+        }
+        let result = FlowModelServ::paginate_detail_items(
+            &filter,
             page_number.0,
             page_size.0,
             desc_by_create.0,

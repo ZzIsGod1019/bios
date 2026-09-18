@@ -50,6 +50,7 @@ pub struct IamResAddReq {
     pub crypto_req: Option<bool>,
     pub crypto_resp: Option<bool>,
     pub double_auth: Option<bool>,
+    pub only_aksk: Option<bool>,
     pub double_auth_msg: Option<String>,
     pub need_login: Option<bool>,
     pub disabled: Option<bool>,
@@ -91,6 +92,7 @@ pub struct IamResModifyReq {
     pub crypto_req: Option<bool>,
     pub crypto_resp: Option<bool>,
     pub double_auth: Option<bool>,
+    pub only_aksk: Option<bool>,
     pub double_auth_msg: Option<String>,
     pub need_login: Option<bool>,
     pub bind_api_res: Option<Vec<String>>,
@@ -136,6 +138,7 @@ pub struct IamResSummaryResp {
     pub crypto_req: bool,
     pub crypto_resp: bool,
     pub double_auth: bool,
+    pub only_aksk: bool,
     pub double_auth_msg: String,
     pub need_login: bool,
 }
@@ -174,6 +177,7 @@ pub struct IamResDetailResp {
     pub crypto_req: bool,
     pub crypto_resp: bool,
     pub double_auth: bool,
+    pub only_aksk: bool,
     pub double_auth_msg: String,
     pub need_login: bool,
 }

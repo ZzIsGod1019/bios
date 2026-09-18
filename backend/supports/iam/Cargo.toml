@@ -29,6 +29,7 @@ serde.workspace = true
 async-trait.workspace = true
 lazy_static.workspace = true
 itertools.workspace = true
+lapin = "2"
 tardis = { workspace = true, features = [
     "reldb-postgres",
     "cache",
@@ -41,6 +42,7 @@ tardis = { workspace = true, features = [
 bios-basic = { version = "0.2.0", path = "../../basic", features = ["default"] }
 bios-sdk-invoke = { version = "0.2.0", path = "../../../frontend/sdks/invoke", features = [
     "default",
+    "reach",
 ] }
 
 
@@ -58,4 +60,5 @@ tardis = { workspace = true, features = ["test"] }
 bios-basic = { version = "0.2.0", path = "../../basic", features = ["default", "test"] }
 bios-sdk-invoke = { version = "0.2.0", path = "../../../frontend/sdks/invoke", features = [
     "default",
+    "reach",
 ] }

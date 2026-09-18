@@ -12,6 +12,8 @@ use tardis::TardisFunsInst;
 use bios_basic::rbum::rbum_config::RbumConfig;
 use tardis::web::poem::http::HeaderName;
 
+use crate::iam_constants;
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(default)]
 pub struct IamConfig {
@@ -19,9 +21,15 @@ pub struct IamConfig {
     pub in_event: bool,
     pub invoke: InvokeConfig,
     pub app_res_data_guard_code: String,
+    /// Platform-level virtual root node id for merged apps tree
+    pub platform_apps_tree_root_id: String,
+    /// Platform-level virtual root node display name for merged apps tree
+    pub platform_apps_tree_root_name: String,
     // token -> (token_kind, account_id)
     // accessToken(token_kind = TokenOauth2) -> (token_kind, rel_iam_item_id, ak, SetCateIds)
     pub cache_key_token_info_: String,
+    // 第三方 Provider token 缓存 key 前缀，完整 key 为 `{prefix}{supplier}:{account_id}`
+    pub cache_key_oauth2_provider_token_: String,
     // ak -> (sk,tenant_id,[appid])
     pub cache_key_aksk_info_: String,
     // account_id -> [token, (token_kind, add_time)]
@@ -32,6 +40,12 @@ pub struct IamConfig {
     //     is_global<bool>:is global account
     // }
     pub cache_key_account_info_: String,
+    // extra_role_id -> {
+    //     <app_id>: app extend role id,
+    // }
+    pub cache_key_extra_role_info_: String,
+    /// 若授权信息找不到，但是拥有以下角色则可以额外获得授权信息
+    pub extra_role_codes: Vec<String>,
     // role_id -> iam_role
     pub cache_key_role_info_: String,
     pub cache_key_double_auth_info: String,
@@ -66,6 +80,18 @@ pub struct IamConfig {
     pub sms_pwd_path: String,
     pub third_integration_config_key: String,
     pub third_integration_schedule_code: String,
+    /// Reach 短信签名 ID：三方凭证到期提醒
+    pub third_party_cert_expiry_reach_msg_signature_id: String,
+    /// Reach 短信模板 ID：三方凭证到期提醒（模板变量：end_time、remaining_days、username）
+    pub third_party_cert_expiry_reach_msg_template_id: String,
+    /// 三方凭证到期提醒去重缓存 key 前缀：`{prefix}{account_id}:{yyyy-mm-dd}`
+    pub cache_key_third_party_cert_expiry_notify_: String,
+    /// Reach 短信签名 ID：三方凭证今日已到期提醒
+    pub third_party_cert_expired_reach_msg_signature_id: String,
+    /// Reach 短信模板 ID：三方凭证今日已到期提醒（模板变量：end_time、username）
+    pub third_party_cert_expired_reach_msg_template_id: String,
+    /// 三方凭证今日已到期提醒去重缓存 key 前缀：`{prefix}{account_id}:{yyyy-mm-dd}`
+    pub cache_key_third_party_cert_expired_notify_: String,
 
     /// init custom role list
     pub init_role_list: Option<Vec<InitRole>>,
@@ -86,6 +112,11 @@ pub struct IamConfig {
     pub oauth2_refresh_token_expire_sec: u32,
     pub oauth2_require_pkce: bool,
     pub oauth2_allow_implicit_flow: bool,
+    /// 第三方 Provider 的 access_token/refresh_token 在 IAM 侧缓存的有效期（秒）
+    ///
+    /// 必须不小于本地登录 token 的有效期，否则会出现「登录 token 未失效但 Provider token 缓存已过期」的问题；
+    /// 实际生效值会与登录 token 默认时长（`RBUM_CERT_CONF_TOKEN_EXPIRE_SEC`）取较大者。
+    pub oauth2_provider_token_cache_expire_sec: u32,
 
     // open-api 插件配置
     pub openapi_plugin_time_range: String,
@@ -101,7 +132,7 @@ pub struct IamConfig {
 #[serde(default)]
 pub struct IamLdapConfig {
     pub port: u16,
-    pub dc: String,
+    pub dc: Vec<String>,
     pub base_dn: String,
     pub bind_dn: String,
     pub bind_password: String,
@@ -109,27 +140,36 @@ pub struct IamLdapConfig {
     pub ou_staff: String,
     /// OU 名称：组织所在组织单位（DN 中 ou= 值）
     pub ou_organization: String,
+    /// OU 名称：应用所在组织单位（DN 中 ou= 值）
+    pub ou_app: String,
     pub schema_dn: String,
     /// Labor type translation map: code -> label
     pub labor_type_map: Option<std::collections::HashMap<String, String>>,
     /// Position translation map: code -> label
     pub position_map: Option<std::collections::HashMap<String, String>>,
+    /// Reach 短信签名 ID：为仅有 LDAP 凭证的账号补全 UserPwd 时发送初始密码短信
+    pub ldap_bootstrap_userpwd_reach_msg_signature_id: String,
+    /// Reach 短信模板 ID：同上
+    pub ldap_bootstrap_userpwd_reach_msg_template_id: String,
 }
 
 impl Default for IamLdapConfig {
     fn default() -> Self {
-        let dc = "bios".to_string();
+        let dc = vec!["bios".to_string()];
         IamLdapConfig {
             port: 10389,
             dc: dc.clone(),
-            base_dn: format!("DC={}", dc),
+            base_dn: format!("DC={}", dc[0]),
             bind_dn: "CN=ldapadmin,DC=bios".to_string(),
             bind_password: "KDi234!ds".to_string(),
             ou_staff: "staff".to_string(),
             ou_organization: "organizations".to_string(),
+            ou_app: "app".to_string(),
             schema_dn: "cn=Subschema".to_string(),
             labor_type_map: None,
             position_map: None,
+            ldap_bootstrap_userpwd_reach_msg_signature_id: "".to_string(),
+            ldap_bootstrap_userpwd_reach_msg_template_id: "".to_string(),
         }
     }
 }
@@ -141,6 +181,7 @@ pub struct IamSpiConfig {
     pub search_url: String,
     pub log_url: String,
     pub search_account_tag: String,
+    pub search_publish_system_tag: String,
     pub stats_orgs_prefix: String,
     pub kv_url: String,
     pub kv_tenant_prefix: String,
@@ -160,6 +201,7 @@ impl Default for IamSpiConfig {
             search_url: "http://127.0.0.1:8080/spi-search".to_string(),
             log_url: "http://127.0.0.1:8080/spi-log".to_string(),
             search_account_tag: "iam_account".to_string(),
+            search_publish_system_tag: "iam_publish_system".to_string(),
             stats_orgs_prefix: "iam_orgs".to_string(),
             kv_url: "http://127.0.0.1:8080/spi-kv".to_string(),
             kv_tenant_prefix: "iam_tenant".to_string(),
@@ -181,11 +223,20 @@ impl Default for IamConfig {
             in_event: false,
             invoke: InvokeConfig::default(),
             app_res_data_guard_code: "5/*/app*data_guard*all".to_string(),
+            platform_apps_tree_root_id: String::new(),
+            platform_apps_tree_root_name: "平台".to_string(),
             cache_key_token_info_: "iam:cache:token:info:".to_string(),
+            cache_key_oauth2_provider_token_: "iam:cache:oauth2:provider_token:".to_string(),
             cache_key_aksk_info_: "iam:cache:aksk:info:".to_string(),
             cache_key_account_rel_: "iam:cache:account:rel:".to_string(),
             cache_key_account_info_: "iam:cache:account:info:".to_string(),
             cache_key_role_info_: "iam:cache:role:info:".to_string(),
+            cache_key_extra_role_info_: "iam:cache:extra:role:info:".to_string(),
+            extra_role_codes: vec![
+                iam_constants::RBUM_ITEM_NAME_APP_READ_ROLE.to_string(),
+                iam_constants::RBUM_ITEM_NAME_PROJECT_READ_ROLE.to_string(),
+                iam_constants::RBUM_ITEM_NAME_SYS_ADMIN_ROLE.to_string(),
+            ],
             // ..:<account_id>
             cache_key_double_auth_info: "iam:cache:double_auth:info:".to_string(),
             cache_key_double_auth_expire_sec: 300,
@@ -213,6 +264,12 @@ impl Default for IamConfig {
             sms_pwd_path: "cc/msg/pwd".to_string(),
             third_integration_config_key: "iam:third:integration:config:key".to_string(),
             third_integration_schedule_code: "iam:third:integration".to_string(),
+            third_party_cert_expiry_reach_msg_signature_id: "".to_string(),
+            third_party_cert_expiry_reach_msg_template_id: "".to_string(),
+            cache_key_third_party_cert_expiry_notify_: "iam:cache:third_cert_expiry_notify:".to_string(),
+            third_party_cert_expired_reach_msg_signature_id: "".to_string(),
+            third_party_cert_expired_reach_msg_template_id: "".to_string(),
+            cache_key_third_party_cert_expired_notify_: "iam:cache:third_cert_expired_notify:".to_string(),
             iam_base_url: "http://127.0.0.1:8080/iam".to_string(),
             spi: Default::default(),
             strict_security_mode: false,
@@ -228,6 +285,7 @@ impl Default for IamConfig {
             oauth2_refresh_token_expire_sec: 30 * 24 * 3600,       // 30天
             oauth2_require_pkce: false,
             oauth2_allow_implicit_flow: false,
+            oauth2_provider_token_cache_expire_sec: 30 * 24 * 3600, // 30天
 
             // open-api 插件配置
             openapi_plugin_time_range: "redis-time-range:opres-time-range".to_string(),
@@ -270,6 +328,8 @@ pub struct BasicInfo {
     pub kind_role_id: String,
     pub kind_res_id: String,
     pub kind_sub_deploy_id: String,
+    pub kind_third_party_app_id: String,
+    pub kind_publish_system_id: String,
     pub domain_iam_id: String,
     pub role_sys_admin_id: String,
     pub role_tenant_admin_id: String,
@@ -277,6 +337,7 @@ pub struct BasicInfo {
     pub role_tenant_app_manager_id: String,
     pub role_app_admin_id: String,
     pub role_app_read_id: String,
+    pub role_project_read_id: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -315,6 +376,8 @@ pub trait IamBasicConfigApi {
     fn iam_basic_kind_role_id(&self) -> String;
     fn iam_basic_kind_res_id(&self) -> String;
     fn iam_basic_kind_sub_deploy_id(&self) -> String;
+    fn iam_basic_kind_third_party_app_id(&self) -> String;
+    fn iam_basic_kind_publish_system_id(&self) -> String;
     fn iam_basic_domain_iam_id(&self) -> String;
     fn iam_basic_role_sys_admin_id(&self) -> String;
     fn iam_basic_role_tenant_admin_id(&self) -> String;
@@ -322,6 +385,7 @@ pub trait IamBasicConfigApi {
     fn iam_basic_role_tenant_app_manager_id(&self) -> String;
     fn iam_basic_role_app_admin_id(&self) -> String;
     fn iam_basic_role_app_read_id(&self) -> String;
+    fn iam_basic_role_project_read_id(&self) -> String;
 }
 
 impl IamBasicConfigApi for TardisFunsInst {
@@ -347,6 +411,14 @@ impl IamBasicConfigApi for TardisFunsInst {
 
     fn iam_basic_kind_sub_deploy_id(&self) -> String {
         IamBasicInfoManager::get_config(|conf| conf.kind_sub_deploy_id.clone())
+    }
+
+    fn iam_basic_kind_third_party_app_id(&self) -> String {
+        IamBasicInfoManager::get_config(|conf| conf.kind_third_party_app_id.clone())
+    }
+
+    fn iam_basic_kind_publish_system_id(&self) -> String {
+        IamBasicInfoManager::get_config(|conf| conf.kind_publish_system_id.clone())
     }
 
     fn iam_basic_domain_iam_id(&self) -> String {
@@ -375,5 +447,9 @@ impl IamBasicConfigApi for TardisFunsInst {
 
     fn iam_basic_role_app_read_id(&self) -> String {
         IamBasicInfoManager::get_config(|conf| conf.role_app_read_id.clone())
+    }
+
+    fn iam_basic_role_project_read_id(&self) -> String {
+        IamBasicInfoManager::get_config(|conf| conf.role_project_read_id.clone())
     }
 }

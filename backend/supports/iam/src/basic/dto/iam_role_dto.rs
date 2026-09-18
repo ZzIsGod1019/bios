@@ -9,8 +9,7 @@ use tardis::web::poem_openapi;
 use bios_basic::rbum::rbum_enumeration::RbumScopeLevelKind;
 
 use crate::basic::dto::iam_account_dto::IamAccountDetailResp;
-use crate::basic::dto::iam_filer_dto::IamRoleFilterReq;
-use crate::iam_enumeration::{IamPermKind, IamRoleKind};
+use crate::iam_enumeration::IamRoleKind;
 
 #[derive(poem_openapi::Object, Serialize, Deserialize, Debug)]
 pub struct IamRoleAggAddReq {
@@ -142,4 +141,11 @@ pub struct IamRoleRelAccountCertResp {
     pub account_id: String,
     pub account: Option<IamAccountDetailResp>,
     pub certs: HashMap<String, String>,
+}
+
+/// 内置角色ID和名称响应
+#[derive(Serialize, Deserialize, Debug, poem_openapi::Object, sea_orm::FromQueryResult)]
+pub struct IamRoleIdNameResp {
+    pub key: String,
+    pub name: String,
 }

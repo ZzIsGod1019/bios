@@ -39,6 +39,8 @@ pub struct FlowInstStartReq {
     pub log_text: Option<String>,
     /// 关联的工作流id
     pub rel_inst_id: Option<String>,
+    /// 创建时指定的状态名（为空或未传时使用模型初始状态）
+    pub current_state_name: Option<String>,
 
     pub data_source: Option<String>,
 }
@@ -131,7 +133,7 @@ pub struct FlowInstSummaryResp {
     /// 结束时间
     pub finish_time: Option<DateTime<Utc>>,
     /// 是否异常终止
-    pub finish_abort: bool,
+    pub finish_abort: Option<bool>,
     /// 输出信息
     pub output_message: Option<String>,
     /// 触发的动作
@@ -466,6 +468,8 @@ pub struct FlowInstFindStateAndTransitionsReq {
     pub flow_inst_id: String,
     /// 参数列表
     pub vars: Option<HashMap<String, Value>>,
+    /// 状态类型
+    pub sys_states: Option<Vec<FlowSysStateKind>>,
 }
 
 /// 实例状态及流转信息
@@ -630,7 +634,11 @@ pub struct FlowInstFilterReq {
     pub finish_abort: Option<bool>,
     /// 当前状态ID
     pub current_state_id: Option<String>,
+    /// 排除的状态ID列表
+    pub not_in_state_id: Option<Vec<String>>,
     pub current_state_sys_kind: Option<FlowSysStateKind>,
+    // 是否为子审批流
+    pub is_child: Option<bool>,
 
     pub with_sub: Option<bool>,
 
@@ -704,6 +712,10 @@ pub struct FlowInstCommentInfo {
     pub id: Option<String>,
     /// 输出信息
     pub output_message: String,
+    /// 附件信息
+    pub attachments: Option<Vec<FlowInstCommentAttachmentInfo>>,
+    /// 图片信息
+    pub images: Option<Vec<String>>,
     /// 评价人上下文
     pub owner: String,
     pub parent_comment_id: Option<String>,
@@ -717,8 +729,19 @@ pub struct FlowInstCommentInfo {
 pub struct FlowInstCommentReq {
     /// 输出信息
     pub output_message: String,
+    /// 附件信息
+    pub attachments: Option<Vec<FlowInstCommentAttachmentInfo>>,
+    /// 图片信息
+    pub images: Option<Vec<String>>,
     pub parent_comment_id: Option<String>,
     pub parent_owner: Option<String>,
+}
+
+/// 评论附件
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, poem_openapi::Object, sea_orm::FromJsonQueryResult)]
+pub struct FlowInstCommentAttachmentInfo {
+    pub name: Option<String>,
+    pub path: Option<String>,
 }
 
 /// 批量检查
@@ -797,10 +820,10 @@ pub struct FlowInstDetailInSearch {
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct ModifyObjSearchExtReq {
     pub tag: String,
-    pub status: Option<String>,                    // 当前状态
+    pub current_state_id: Option<String>,          // 当前状态ID
     pub rel_state: Option<String>,                 // 审批状态
     pub rel_transition_state_name: Option<String>, // 审批节点名
-    pub current_state_color: Option<String>,       // 当前状态颜色信息
+    pub current_state_sort: Option<i64>,           // 当前状态排序信息
 }
 
 /// 实例统计数量请求

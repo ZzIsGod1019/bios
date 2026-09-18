@@ -28,6 +28,12 @@ use crate::basic::serv::iam_rel_serv::IamRelServ;
 use crate::iam_config::IamConfig;
 use crate::iam_constants::{self, IAM_AVATAR};
 use crate::iam_enumeration::{IamCertTokenKind, IamRelKind};
+#[derive(Serialize)]
+struct IamCacheExtraRoleInfoValue {
+    own_paths: String,
+    role_id: String,
+}
+
 pub struct IamIdentCacheServ;
 
 impl IamIdentCacheServ {
@@ -383,7 +389,11 @@ impl IamIdentCacheServ {
                     format!("{}{}", funs.conf::<IamConfig>().cache_key_account_info_, account_info.account_id).as_str(),
                     &account_app_info.app_id,
                     &TardisFuns::json.obj_to_string(&TardisContext {
-                        own_paths: format!("{}/{}", tenant_id, account_app_info.app_id).to_string(),
+                        own_paths: if tenant_id.is_empty() {
+                            account_app_info.app_own_paths.clone()
+                        } else {
+                            format!("{}/{}", tenant_id, account_app_info.app_id).to_string()
+                        },
                         owner: account_info.account_id.to_string(),
                         roles: account_app_info.roles.keys().map(|id| id.to_string()).collect(),
                         groups: account_app_info.groups.keys().map(|id| id.to_string()).collect(),
@@ -553,7 +563,8 @@ impl IamIdentCacheServ {
                 match_path,
                 ak
             ))
-            .await?.map(|s| tardis::TardisFuns::json.str_to_obj::<HashMap<String, String>>(&s).unwrap_or_default());
+            .await?
+            .map(|s| tardis::TardisFuns::json.str_to_obj::<HashMap<String, String>>(&s).unwrap_or_default());
         Ok(result)
     }
 
@@ -576,14 +587,17 @@ impl IamIdentCacheServ {
 
     pub async fn get_bind_api_res(res_id: &str, match_method: Option<&str>, funs: &TardisFunsInst) -> TardisResult<Option<Vec<String>>> {
         let match_path = &funs.conf::<IamConfig>().gateway_openapi_path;
-        let result = funs.cache().get(&format!(
-            "{}{}:res:{}:{}:{}",
-            funs.conf::<IamConfig>().cache_key_gateway_rule_info_,
-            funs.conf::<IamConfig>().openapi_plugin_allow_api_res,
-            match_method.unwrap_or("*"),
-            match_path,
-            res_id,
-        )).await?;
+        let result = funs
+            .cache()
+            .get(&format!(
+                "{}{}:res:{}:{}:{}",
+                funs.conf::<IamConfig>().cache_key_gateway_rule_info_,
+                funs.conf::<IamConfig>().openapi_plugin_allow_api_res,
+                match_method.unwrap_or("*"),
+                match_path,
+                res_id,
+            ))
+            .await?;
         Ok(result.map(|s| tardis::TardisFuns::json.str_to_obj::<Vec<String>>(&s).unwrap_or_default()))
     }
 
@@ -606,14 +620,17 @@ impl IamIdentCacheServ {
 
     pub async fn get_ak_bind_api_res(res_id: &str, match_method: Option<&str>, funs: &TardisFunsInst) -> TardisResult<Option<Vec<String>>> {
         let match_path = &funs.conf::<IamConfig>().gateway_openapi_path;
-        let result = funs.cache().get(&format!(
-            "{}{}:{}:{}:{}",
-            funs.conf::<IamConfig>().cache_key_gateway_rule_info_,
-            funs.conf::<IamConfig>().openapi_plugin_allow_api_res,
-            match_method.unwrap_or("*"),
-            match_path,
-            res_id,
-        )).await?;
+        let result = funs
+            .cache()
+            .get(&format!(
+                "{}{}:{}:{}:{}",
+                funs.conf::<IamConfig>().cache_key_gateway_rule_info_,
+                funs.conf::<IamConfig>().openapi_plugin_allow_api_res,
+                match_method.unwrap_or("*"),
+                match_path,
+                res_id,
+            ))
+            .await?;
         Ok(result.map(|s| tardis::TardisFuns::json.str_to_obj::<Vec<String>>(&s).unwrap_or_default()))
     }
 
@@ -773,18 +790,54 @@ impl IamIdentCacheServ {
         }
         Ok(())
     }
+    pub async fn add_extra_role_info(extra_role_id: &str, app_id: &str, own_paths: &str, app_extend_role_id: &str, funs: &TardisFunsInst) -> TardisResult<()> {
+        log::trace!(
+            "add extra role info: extra_role_id={}, app_id={}, own_paths={}, app_extend_role_id={}",
+            extra_role_id,
+            app_id,
+            own_paths,
+            app_extend_role_id
+        );
+        let value = TardisFuns::json.obj_to_string(&IamCacheExtraRoleInfoValue {
+            own_paths: own_paths.to_string(),
+            role_id: app_extend_role_id.to_string(),
+        })?;
+        funs.cache()
+            .hset(
+                format!("{}{}", funs.conf::<IamConfig>().cache_key_extra_role_info_, extra_role_id).as_str(),
+                app_id,
+                value.as_str(),
+            )
+            .await?;
+        Ok(())
+    }
+    pub async fn delete_extra_role_info(extra_role_id: &str, app_id: &str, funs: &TardisFunsInst) -> TardisResult<()> {
+        log::trace!("delete extra role info: extra_role_id={}, app_id={}", extra_role_id, app_id);
+        funs.cache().hdel(format!("{}{}", funs.conf::<IamConfig>().cache_key_extra_role_info_, extra_role_id).as_str(), app_id).await?;
+        Ok(())
+    }
 }
 
 pub struct IamResCacheServ;
 
 impl IamResCacheServ {
-    pub async fn add_res(item_code: &str, action: &str, crypto_req: bool, crypto_resp: bool, double_auth: bool, need_login: bool, funs: &TardisFunsInst) -> TardisResult<()> {
+    pub async fn add_res(
+        item_code: &str,
+        action: &str,
+        crypto_req: bool,
+        crypto_resp: bool,
+        double_auth: bool,
+        only_aksk: bool,
+        need_login: bool,
+        funs: &TardisFunsInst,
+    ) -> TardisResult<()> {
         let uri_mixed = Self::package_uri_mixed(item_code, action);
         log::trace!("add res: uri_mixed={}", uri_mixed);
         let add_res_dto = IamCacheResRelAddOrModifyDto {
             need_crypto_req: crypto_req,
             need_crypto_resp: crypto_resp,
             need_double_auth: double_auth,
+            need_only_aksk: only_aksk,
             need_login,
             ..Default::default()
         };
@@ -812,6 +865,7 @@ impl IamResCacheServ {
             need_crypto_req: false,
             need_crypto_resp: false,
             need_double_auth: false,
+            need_only_aksk: false,
             need_login: false,
         };
         let uri_mixed = Self::package_uri_mixed(item_code, action);
@@ -821,6 +875,7 @@ impl IamResCacheServ {
             res_dto.need_crypto_req = old_res_dto.need_crypto_req;
             res_dto.need_crypto_resp = old_res_dto.need_crypto_resp;
             res_dto.need_double_auth = old_res_dto.need_double_auth;
+            res_dto.need_only_aksk = old_res_dto.need_only_aksk;
             res_dto.need_login = old_res_dto.need_login;
         }
         funs.cache().hset(&funs.conf::<IamConfig>().cache_key_res_info, &uri_mixed, &TardisFuns::json.obj_to_string(&res_dto)?).await?;
@@ -846,6 +901,7 @@ impl IamResCacheServ {
             need_crypto_req: false,
             need_crypto_resp: false,
             need_double_auth: false,
+            need_only_aksk: false,
             need_login: false,
         };
         let uri_mixed = Self::package_uri_mixed(item_code, action);
@@ -876,6 +932,11 @@ impl IamResCacheServ {
                 res_dto.need_double_auth = need_double_auth
             } else {
                 res_dto.need_double_auth = old_res_dto.need_double_auth
+            }
+            if let Some(need_only_aksk) = add_or_modify_req.need_only_aksk {
+                res_dto.need_only_aksk = need_only_aksk
+            } else {
+                res_dto.need_only_aksk = old_res_dto.need_only_aksk
             }
             if let Some(need_login) = add_or_modify_req.need_login {
                 res_dto.need_login = need_login
@@ -922,6 +983,7 @@ impl IamResCacheServ {
             need_crypto_req: false,
             need_crypto_resp: false,
             need_double_auth: false,
+            need_only_aksk: false,
             need_login: false,
         };
         if let Some(need_crypto_req) = add_or_modify_req.need_crypto_req {
@@ -932,6 +994,9 @@ impl IamResCacheServ {
         }
         if let Some(need_double_auth) = add_or_modify_req.need_double_auth {
             res_dto.need_double_auth = need_double_auth
+        }
+        if let Some(need_only_aksk) = add_or_modify_req.need_only_aksk {
+            res_dto.need_only_aksk = need_only_aksk
         }
         if let Some(need_login) = add_or_modify_req.need_login {
             res_dto.need_login = need_login
@@ -1040,6 +1105,7 @@ struct IamCacheResRelAddOrModifyDto {
     pub need_crypto_req: bool,
     pub need_crypto_resp: bool,
     pub need_double_auth: bool,
+    pub need_only_aksk: bool,
     pub need_login: bool,
 }
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -1067,6 +1133,7 @@ pub struct IamCacheResRelAddOrModifyReq {
     pub need_crypto_req: Option<bool>,
     pub need_crypto_resp: Option<bool>,
     pub need_double_auth: Option<bool>,
+    pub need_only_aksk: Option<bool>,
     pub need_login: Option<bool>,
 }
 

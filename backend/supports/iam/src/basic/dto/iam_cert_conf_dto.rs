@@ -89,6 +89,10 @@ pub struct IamCertConfOAuth2AddOrModifyReq {
     pub ak: TrimString,
     #[oai(validator(min_length = "2", max_length = "2000"))]
     pub sk: TrimString,
+    /// OAuth2 身份提供方的基础地址（仅 Bios supplier 需要），例如 `https://bios.example.com`
+    /// 用于拼接 token / userinfo 端点；Github / WechatMp 等内置 supplier 可不填
+    #[oai(validator(max_length = "2000"))]
+    pub base_url: Option<String>,
 }
 
 #[derive(poem_openapi::Object, Serialize, Deserialize, Debug, Clone)]
@@ -100,8 +104,7 @@ pub struct IamCertConfOAuth2ServiceAddOrModifyReq {
     pub access_token_expire_sec: Option<i64>,
     /// This is the callback address for the third-party access
     /// 第三方接入的回调地址
-    #[oai(validator(min_length = "2", max_length = "2000"))]
-    pub redirect_uri: TrimString,
+    pub redirect_uris: Vec<String>,
     pub rel_rbum_item_id: Option<String>,
 }
 
@@ -114,17 +117,16 @@ pub struct IamCertConfOAuth2ServiceResp {
     pub client_secret: String,
     /// The expiration time of the access_token
     pub access_token_expire_sec: i64,
-    /// This is the callback address for the third-party access
-    /// 第三方接入的回调地址
-    #[oai(validator(min_length = "2", max_length = "2000"))]
-    pub redirect_uri: String,
+    /// The callback addresses for the third-party access
+    /// 第三方接入的回调地址列表
+    pub redirect_uris: Vec<String>,
 }
 
 #[derive(poem_openapi::Object, Serialize, Deserialize, Debug, Clone)]
 pub struct IamCertConfOAuth2ServiceExt {
     pub client_id: String,
     pub client_secret: String,
-    pub redirect_uri: String,
+    pub redirect_uris: Vec<String>,
     pub scope: Vec<String>,
 }
 
@@ -134,6 +136,9 @@ pub struct IamCertConfOAuth2Resp {
     pub ak: String,
     #[oai(validator(min_length = "2", max_length = "2000"))]
     pub sk: String,
+    /// OAuth2 身份提供方的基础地址（仅 Bios supplier 需要）
+    #[oai(validator(max_length = "2000"))]
+    pub base_url: Option<String>,
 }
 #[derive(poem_openapi::Object, Serialize, Deserialize, Debug)]
 pub struct IamCertConfAkSkAddOrModifyReq {

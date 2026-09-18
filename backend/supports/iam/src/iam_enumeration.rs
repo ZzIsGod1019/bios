@@ -69,6 +69,8 @@ pub enum IamCertOAuth2Supplier {
     // Weibo,
     Github,
     WechatMp,
+    /// 对接另一套 bios IAM 作为 OAuth2 身份提供方
+    BiosIam,
 }
 
 impl IamCertOAuth2Supplier {
@@ -118,6 +120,15 @@ pub enum IamRelKind {
     IamSubDeployApps,
     IamSubDeployApp,
     IamSubDeployRel,
+
+    /// 第三方应用与账号绑定
+    IamThirdPartyAppAccount,
+
+    /// 应用与发布系统关联
+    IamAppPublishSystem,
+
+    /// 发布系统与租户关联
+    IamPublishSystemTenant,
 }
 
 #[derive(Display, Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize, poem_openapi::Enum)]
@@ -376,6 +387,52 @@ impl TryGetable for IamAccountStatusKind {
     fn try_get(res: &QueryResult, pre: &str, col: &str) -> Result<Self, TryGetError> {
         let s = i16::try_get(res, pre, col)?;
         IamAccountStatusKind::from_int(s).map_err(|_| TryGetError::DbErr(DbErr::RecordNotFound(format!("{pre}:{col}"))))
+    }
+
+    fn try_get_by<I: sea_orm::ColIdx>(_res: &QueryResult, _index: I) -> Result<Self, TryGetError> {
+        panic!("not implement")
+    }
+}
+
+/// 第三方应用状态类型
+#[derive(Display, Clone, Debug, PartialEq, Eq, Deserialize, Serialize, poem_openapi::Enum, strum::EnumString)]
+pub enum IamThirdPartyAppStatusKind {
+    /// 禁用
+    Disabled,
+    /// 启用
+    Enabled,
+}
+
+impl IamThirdPartyAppStatusKind {
+    pub fn from_int(s: i16) -> TardisResult<IamThirdPartyAppStatusKind> {
+        match s {
+            0 => Ok(IamThirdPartyAppStatusKind::Disabled),
+            1 => Ok(IamThirdPartyAppStatusKind::Enabled),
+            _ => Err(TardisError::format_error(
+                &format!("invalid IamThirdPartyAppStatusKind: {s}"),
+                "406-iam-third-party-app-status-enum-init-error",
+            )),
+        }
+    }
+
+    pub fn to_int(&self) -> i16 {
+        match self {
+            IamThirdPartyAppStatusKind::Disabled => 0,
+            IamThirdPartyAppStatusKind::Enabled => 1,
+        }
+    }
+}
+
+impl Default for IamThirdPartyAppStatusKind {
+    fn default() -> Self {
+        IamThirdPartyAppStatusKind::Disabled
+    }
+}
+
+impl TryGetable for IamThirdPartyAppStatusKind {
+    fn try_get(res: &QueryResult, pre: &str, col: &str) -> Result<Self, TryGetError> {
+        let s = i16::try_get(res, pre, col)?;
+        IamThirdPartyAppStatusKind::from_int(s).map_err(|_| TryGetError::DbErr(DbErr::RecordNotFound(format!("{pre}:{col}"))))
     }
 
     fn try_get_by<I: sea_orm::ColIdx>(_res: &QueryResult, _index: I) -> Result<Self, TryGetError> {

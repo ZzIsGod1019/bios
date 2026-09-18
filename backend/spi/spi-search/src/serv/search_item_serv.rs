@@ -2,6 +2,7 @@ use crate::dto::search_item_dto::{
     GroupSearchItemSearchReq, GroupSearchItemSearchResp, MultipleSearchItemSearchReq, SearchExportDataReq, SearchExportDataResp, SearchImportDataReq, SearchItemAddReq,
     SearchItemModifyReq, SearchItemSearchReq, SearchItemSearchResp, SearchQueryMetricsReq, SearchQueryMetricsResp, SearchSaveItemReq,
 };
+use crate::dto::search_sync_dto::{SearchSyncBatchReq, SearchSyncFinishReq, SearchSyncFinishResp};
 use crate::search_initializer;
 use bios_basic::spi::spi_constants;
 use bios_basic::spi::spi_funs::SpiBsInstExtractor;
@@ -26,7 +27,7 @@ spi_dispatch_service! {
         add(add_req: &mut SearchItemAddReq) -> TardisResult<()>;
         modify(tag: &str, key: &str, modify_req: &mut SearchItemModifyReq) -> TardisResult<()>;
         save(tag: &str, save_req: &mut SearchSaveItemReq) -> TardisResult<()>;
-        batch_save(tag: &str, batch_req: &mut Vec<SearchSaveItemReq>) -> TardisResult<()>;
+        batch_save(tag: &str, only_modify: Option<bool>, batch_req: &mut Vec<SearchSaveItemReq>) -> TardisResult<()>;
         delete(tag: &str, key: &str) -> TardisResult<()>;
         batch_delete(tag: &str, key: Vec<String>) -> TardisResult<()>;
         delete_by_ownership(tag: &str, own_paths: &str) -> TardisResult<()>;
@@ -37,5 +38,7 @@ spi_dispatch_service! {
         refresh_tsv(tag: &str) -> TardisResult<()>;
         export_data(export_req: &SearchExportDataReq) -> TardisResult<SearchExportDataResp>;
         import_data(import_req: &SearchImportDataReq) -> TardisResult<bool>;
+        sync_batch(batch_req: &mut SearchSyncBatchReq) -> TardisResult<()>;
+        sync_finish(finish_req: &mut SearchSyncFinishReq) -> TardisResult<SearchSyncFinishResp>;
     }
 }

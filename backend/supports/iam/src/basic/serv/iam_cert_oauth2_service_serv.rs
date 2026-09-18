@@ -1,10 +1,10 @@
 use bios_basic::rbum::{
     dto::{
         rbum_cert_conf_dto::{RbumCertConfAddReq, RbumCertConfModifyReq, RbumCertConfSummaryResp},
-        rbum_filer_dto::{RbumBasicFilterReq, RbumCertConfFilterReq},
+        rbum_filer_dto::{RbumBasicFilterReq, RbumCertConfFilterReq, RbumCertFilterReq},
     },
     rbum_enumeration::RbumCertConfStatusKind,
-    serv::{rbum_cert_serv::RbumCertConfServ, rbum_crud_serv::RbumCrudOperation as _},
+    serv::{rbum_cert_serv::RbumCertConfServ, rbum_crud_serv::RbumCrudOperation as _, rbum_item_serv::RbumItemCrudOperation as _},
 };
 use serde::{Deserialize, Serialize};
 use tardis::{
@@ -17,13 +17,20 @@ use crate::{
     basic::{
         dto::{
             iam_cert_conf_dto::{IamCertConfOAuth2ServiceAddOrModifyReq, IamCertConfOAuth2ServiceExt, IamCertConfOAuth2ServiceResp},
-            iam_cert_dto::{IamCertOAuth2ServiceCodeAddReq, IamCertOAuth2ServiceCodeVerifyReq, IamCertOAuth2ServiceRefreshTokenReq, IamOauth2TokenResp},
+            iam_cert_dto::{
+                IamCertOAuth2ServiceCodeAddReq, IamCertOAuth2ServiceCodeVerifyReq, IamCertOAuth2ServiceRefreshTokenReq, IamOauth2IntrospectResp, IamOauth2TokenResp,
+                IamOauth2UserInfoResp,
+            },
+            iam_filer_dto::IamAccountFilterReq,
         },
-        serv::iam_key_cache_serv::IamIdentCacheServ,
+        serv::{iam_account_serv::IamAccountServ, iam_cert_serv::IamCertServ, iam_key_cache_serv::IamIdentCacheServ},
     },
     iam_config::{IamBasicConfigApi as _, IamConfig},
-    iam_enumeration::{IamCertExtKind, IamCertTokenKind, OAuth2ResponseType, Oauth2GrantType, Oauth2TokenType},
+    iam_enumeration::{IamCertExtKind, IamCertKernelKind, IamCertTokenKind, OAuth2ResponseType, Oauth2GrantType, Oauth2TokenType},
 };
+
+/// userinfo / introspect 返回的身份提供方标识
+const OAUTH2_PROVIDER: &str = "bios-iam";
 
 const REDIS_CODE_KEY: &str = "iam:oauth2:service:code:";
 const REDIS_REFRESH_TOKEN_KEY: &str = "iam:oauth2:service:refresh_token:";
@@ -67,7 +74,7 @@ impl IamCertOAuth2ServiceServ {
                 ext: Some(TardisFuns::json.obj_to_string(&IamCertConfOAuth2ServiceExt {
                     client_id,
                     client_secret,
-                    redirect_uri: add_req.redirect_uri.to_string(),
+                    redirect_uris: add_req.redirect_uris.clone(),
                     scope: vec![],
                 })?),
                 sk_need: Some(false),
@@ -81,7 +88,7 @@ impl IamCertOAuth2ServiceServ {
                 sk_lock_err_times: None,
                 sk_lock_duration_sec: None,
                 coexist_num: Some(1),
-                conn_uri: Some(add_req.redirect_uri.to_string()),
+                conn_uri: add_req.redirect_uris.first().cloned(),
                 status: RbumCertConfStatusKind::Enabled,
                 rel_rbum_domain_id: funs.iam_basic_domain_iam_id(),
                 rel_rbum_item_id: add_req.rel_rbum_item_id.clone(),
@@ -117,7 +124,7 @@ impl IamCertOAuth2ServiceServ {
             client_id: ext.client_id,
             client_secret: ext.client_secret,
             access_token_expire_sec: cert_conf.expire_sec,
-            redirect_uri: ext.redirect_uri,
+            redirect_uris: ext.redirect_uris,
         })
     }
 
@@ -148,7 +155,7 @@ impl IamCertOAuth2ServiceServ {
                 client_id: ext.client_id,
                 client_secret: ext.client_secret,
                 access_token_expire_sec: cert_conf.expire_sec,
-                redirect_uri: ext.redirect_uri.to_string(),
+                redirect_uris: ext.redirect_uris.clone(),
             });
         }
 
@@ -207,8 +214,8 @@ impl IamCertOAuth2ServiceServ {
 
         let ext = TardisFuns::json.str_to_obj::<IamCertConfOAuth2ServiceExt>(&conf.ext)?;
 
-        // 3. 验证重定向URI
-        if add_req.redirect_uri.to_string() != ext.redirect_uri {
+        // 3. 验证重定向URI（必须在已注册列表中）
+        if !ext.redirect_uris.iter().any(|uri| *uri == add_req.redirect_uri.to_string()) {
             return Err(funs.err().bad_request("oauth2", "generate_code", "invalid_redirect_uri", "400-oauth2-invalid-redirect-uri"));
         }
 
@@ -289,7 +296,7 @@ impl IamCertOAuth2ServiceServ {
         let access_token_expire_sec = conf.expire_sec;
 
         // 7. 存储访问令牌（复用现有的令牌缓存系统）
-        IamIdentCacheServ::add_token(&access_token, &IamCertTokenKind::TokenOauth2, &code_info.ctx.owner, None, access_token_expire_sec, 1, funs).await?;
+        IamIdentCacheServ::add_token(&access_token, &IamCertTokenKind::TokenOauth2, &code_info.ctx.owner, None, access_token_expire_sec, conf.coexist_num, funs).await?;
 
         // 8. 存储刷新令牌
         let refresh_token_info = IamOAuth2RefreshTokenInfo {
@@ -323,7 +330,7 @@ impl IamCertOAuth2ServiceServ {
         }
 
         // 2. 获取刷新令牌信息
-        let refresh_token_data = funs.cache().get(&format!("iam:oauth2:refresh_token:{}", req.refresh_token)).await?;
+        let refresh_token_data = funs.cache().get(&format!("{}{}", REDIS_REFRESH_TOKEN_KEY, req.refresh_token)).await?;
         let refresh_token_info: IamOAuth2RefreshTokenInfo = match refresh_token_data {
             Some(data) => TardisFuns::json.str_to_obj(&data)?,
             None => return Err(funs.err().unauthorized("oauth2", "refresh_token", "invalid_refresh_token", "401-oauth2-invalid-refresh-token")),
@@ -338,19 +345,21 @@ impl IamCertOAuth2ServiceServ {
             return Err(funs.err().unauthorized("oauth2", "refresh_token", "refresh_token_expired", "401-oauth2-refresh-token-expired"));
         }
 
-        // 4. 生成新的访问令牌
-        let new_access_token = TardisFuns::crypto.key.generate_token()?;
-        let iam_config = funs.conf::<IamConfig>();
-        let access_token_expire_sec = iam_config.oauth2_access_token_default_expire_sec;
+        // 4. 获取凭证配置
+        let conf = Self::get_cert_conf_by_client_id(&refresh_token_info.client_id, funs).await?;
+        let access_token_expire_sec = conf.expire_sec;
 
-        // 5. 存储新的访问令牌
+        // 5. 生成新的访问令牌
+        let new_access_token = TardisFuns::crypto.key.generate_token()?;
+
+        // 6. 存储新的访问令牌
         IamIdentCacheServ::add_token(
             &new_access_token,
             &IamCertTokenKind::TokenOauth2,
             &refresh_token_info.user_id,
             None,
-            access_token_expire_sec as i64,
-            1,
+            access_token_expire_sec,
+            conf.coexist_num,
             funs,
         )
         .await?;
@@ -368,5 +377,105 @@ impl IamCertOAuth2ServiceServ {
     pub async fn verify_code(add_req: &IamCertOAuth2ServiceCodeVerifyReq, funs: &TardisFunsInst) -> TardisResult<String> {
         let token_resp = Self::verify_code_and_generate_token(add_req, funs).await?;
         Ok(token_resp.access_token)
+    }
+
+    /// 解析访问令牌并返回对应的账号 ID
+    ///
+    /// 仅接受 OAuth2 类型（`TokenOauth2`）的令牌，避免普通登录令牌被用于换取用户信息。
+    async fn resolve_account_id_by_access_token(access_token: &str, funs: &TardisFunsInst) -> TardisResult<String> {
+        let token_info = funs
+            .cache()
+            .get(format!("{}{}", funs.conf::<IamConfig>().cache_key_token_info_, access_token).as_str())
+            .await?
+            .ok_or_else(|| funs.err().unauthorized("oauth2", "userinfo", "invalid_or_expired_token", "401-oauth2-invalid-token"))?;
+        let mut parts = token_info.split(',');
+        let token_kind = parts.next().unwrap_or_default();
+        let account_id = parts.next().unwrap_or_default();
+        if token_kind != IamCertTokenKind::TokenOauth2.to_string() || account_id.is_empty() {
+            return Err(funs.err().unauthorized("oauth2", "userinfo", "invalid_token_kind", "401-oauth2-invalid-token"));
+        }
+        Ok(account_id.to_string())
+    }
+
+    /// 根据访问令牌返回用户信息（Provider 侧 userinfo 端点的服务实现）
+    pub async fn get_userinfo(access_token: &str, funs: &TardisFunsInst) -> TardisResult<IamOauth2UserInfoResp> {
+        let account_id = Self::resolve_account_id_by_access_token(access_token, funs).await?;
+        Self::build_userinfo_by_account_id(&account_id, None, funs).await
+    }
+
+    /// 根据账号 ID 构建用户信息（供基于登录上下文 `TardisContext` 的 userinfo 端点复用）
+    ///
+    /// `tenant_id_override` 用于指定返回的 `tenant_id`：基于登录上下文时传入 `ctx.own_paths`，
+    /// 以返回当前请求所处的租户；为 `None` 时回退到账号自身所属租户。
+    pub async fn build_userinfo_by_account_id(account_id: &str, tenant_id_override: Option<&str>, funs: &TardisFunsInst) -> TardisResult<IamOauth2UserInfoResp> {
+        let account_id = account_id.to_string();
+        // 以全局视角读取账号信息，避免账号上下文未缓存时无法定位租户
+        let mock_ctx = TardisContext {
+            own_paths: "".to_string(),
+            owner: account_id.clone(),
+            ..Default::default()
+        };
+        let account = IamAccountServ::get_item(
+            &account_id,
+            &IamAccountFilterReq {
+                basic: RbumBasicFilterReq {
+                    own_paths: Some("".to_string()),
+                    with_sub_own_paths: true,
+                    ignore_scope: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            funs,
+            &mock_ctx,
+        )
+        .await?;
+        let certs = IamCertServ::find_certs(
+            &RbumCertFilterReq {
+                basic: RbumBasicFilterReq {
+                    own_paths: Some(account.own_paths.clone()),
+                    with_sub_own_paths: true,
+                    ignore_scope: true,
+                    ..Default::default()
+                },
+                rel_rbum_id: Some(account_id.clone()),
+                ..Default::default()
+            },
+            None,
+            None,
+            funs,
+            &mock_ctx,
+        )
+        .await
+        .unwrap_or_default();
+        let mail = certs.iter().find(|c| c.kind == IamCertKernelKind::MailVCode.to_string()).map(|c| c.ak.clone());
+        let phone = certs.iter().find(|c| c.kind == IamCertKernelKind::PhoneVCode.to_string()).map(|c| c.ak.clone());
+        Ok(IamOauth2UserInfoResp {
+            provider: OAUTH2_PROVIDER.to_string(),
+            sub: account.id,
+            tenant_id: tenant_id_override.map(|t| t.to_string()).unwrap_or(account.own_paths),
+            name: account.name,
+            mail,
+            phone,
+            employee_no: if account.employee_code.is_empty() { None } else { Some(account.employee_code) },
+            id_card_no: if account.id_card_no.is_empty() { None } else { Some(account.id_card_no) },
+            disabled: account.disabled,
+        })
+    }
+
+    /// 令牌内省（Provider 侧 introspect 端点的服务实现）
+    pub async fn introspect(token: &str, funs: &TardisFunsInst) -> TardisResult<IamOauth2IntrospectResp> {
+        match Self::resolve_account_id_by_access_token(token, funs).await {
+            Ok(account_id) => Ok(IamOauth2IntrospectResp {
+                active: true,
+                provider: Some(OAUTH2_PROVIDER.to_string()),
+                sub: Some(account_id),
+            }),
+            Err(_) => Ok(IamOauth2IntrospectResp {
+                active: false,
+                provider: None,
+                sub: None,
+            }),
+        }
     }
 }

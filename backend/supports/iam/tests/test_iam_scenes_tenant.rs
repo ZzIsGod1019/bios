@@ -670,6 +670,7 @@ pub async fn tenant_console_app_set_mgr_page(client: &mut BIOSWebTestClient) -> 
                 set_cate_id: None,
                 kind: None,
                 sync_apps_group: None,
+                publish_system_ids: None,
             },
         )
         .await;
@@ -687,6 +688,7 @@ pub async fn tenant_console_app_set_mgr_page(client: &mut BIOSWebTestClient) -> 
                 set_cate_id: None,
                 kind: None,
                 sync_apps_group: None,
+                publish_system_ids: None,
             },
         )
         .await;

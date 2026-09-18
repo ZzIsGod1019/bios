@@ -328,3 +328,85 @@ pub struct IamOauth2TokenResp {
 pub struct IamOauth2AuthorizeResp {
     pub redirect_url: String,
 }
+
+/// OAuth2 用户信息响应（Provider 侧，供接入方据此映射本地账号）
+#[derive(poem_openapi::Object, Serialize, Deserialize, Debug, Clone)]
+pub struct IamOauth2UserInfoResp {
+    /// 身份提供方标识，固定为 bios IAM
+    pub provider: String,
+    /// 唯一主体标识，等于 Provider 侧账号 ID（接入方应据此建立绑定关系）
+    pub sub: String,
+    /// 账号所属租户 ID（own_paths），全局账号为空字符串
+    pub tenant_id: String,
+    /// 账号名称
+    pub name: String,
+    /// 邮箱（若有）
+    pub mail: Option<String>,
+    /// 手机号（若有）
+    pub phone: Option<String>,
+    /// 员工工号（若有）
+    pub employee_no: Option<String>,
+    /// 证件号（若有）
+    pub id_card_no: Option<String>,
+    /// 账号是否已禁用/注销
+    pub disabled: bool,
+}
+
+/// OAuth2 令牌内省请求
+#[derive(poem_openapi::Object, Serialize, Deserialize, Debug, Clone)]
+pub struct IamOauth2IntrospectReq {
+    pub token: String,
+}
+
+/// OAuth2 令牌内省响应
+#[derive(poem_openapi::Object, Serialize, Deserialize, Debug, Clone)]
+pub struct IamOauth2IntrospectResp {
+    /// 令牌是否有效
+    pub active: bool,
+    /// 身份提供方标识（仅 active 时返回）
+    pub provider: Option<String>,
+    /// 主体标识，等于 Provider 侧账号 ID（仅 active 时返回）
+    pub sub: Option<String>,
+}
+
+/// 临时脚本：为仅有 LDAP 凭证、无 UserPwd 的账号补全 UserPwd 后的单条结果
+#[derive(poem_openapi::Object, Serialize, Deserialize, Debug, Clone)]
+pub struct IamCiLdapBootstrapUserPwdItemResp {
+    /// 账号对应 rbum_item 的 name
+    pub account_name: String,
+    /// UserPwd 凭证的 ak（与 LDAP 侧登录名一致，必要时已去重改名）
+    pub ak: String,
+    /// 生成的 UserPwd 明文密码
+    pub password_plain: String,
+}
+
+/// 临时脚本：为仅有 LDAP 凭证、无 UserPwd 的账号批量补全 UserPwd 的返回
+#[derive(poem_openapi::Object, Serialize, Deserialize, Debug, Clone)]
+pub struct IamCiLdapBootstrapUserPwdResp {
+    pub items: Vec<IamCiLdapBootstrapUserPwdItemResp>,
+}
+
+/// 定时脚本：三方凭证到期提醒 — 已发送记录
+#[derive(poem_openapi::Object, Serialize, Deserialize, Debug, Clone)]
+pub struct IamCcThirdPartyCertExpiryNotifyItemResp {
+    pub cert_id: String,
+    pub account_id: String,
+    pub supplier: String,
+    pub end_time: DateTime<Utc>,
+    pub remaining_days: i64,
+}
+
+/// 定时脚本：三方凭证到期提醒 — 跳过记录
+#[derive(poem_openapi::Object, Serialize, Deserialize, Debug, Clone)]
+pub struct IamCcThirdPartyCertExpiryNotifySkippedItemResp {
+    pub cert_id: String,
+    pub account_id: String,
+    pub reason: String,
+}
+
+/// 定时脚本：三方凭证到期提醒返回
+#[derive(poem_openapi::Object, Serialize, Deserialize, Debug, Clone)]
+pub struct IamCcThirdPartyCertExpiryNotifyResp {
+    pub sent: Vec<IamCcThirdPartyCertExpiryNotifyItemResp>,
+    pub skipped: Vec<IamCcThirdPartyCertExpiryNotifySkippedItemResp>,
+}

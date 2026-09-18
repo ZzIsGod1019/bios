@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::dto::flow_model_dto::{
-    FlowModelAggResp, FlowModelAssociativeOperationKind, FlowModelBatchDisableReq, FlowModelCopyOrReferenceCiReq, FlowModelExistRelByTemplateIdsReq, FlowModelFilterReq, FlowModelFindRelStateResp, FlowModelKind, FlowModelModifyReq, FlowModelSyncModifiedFieldReq
+    FlowModelAggResp, FlowModelAssociativeOperationKind, FlowModelBatchDisableReq, FlowModelCopyOrReferenceCiReq, FlowModelExistRelByTemplateIdsReq, FlowModelFilterReq, FlowModelFindRelStateResp, FlowModelInitCopyReq, FlowModelKind, FlowModelModifyReq, FlowModelSyncModifiedFieldReq
 };
 use crate::flow_constants;
 use crate::helper::task_handler_helper;
@@ -73,11 +73,16 @@ impl FlowCiModelApi {
         &self,
         tag: Query<String>,
         rel_template_id: Query<Option<String>>,
+        tenant_id: Query<Option<String>>,
+        app_id: Query<Option<String>>,
         mut ctx: TardisContextExtractor,
         request: &Request,
     ) -> TardisApiResult<Vec<FlowModelFindRelStateResp>> {
         let funs = flow_constants::get_tardis_inst();
         check_without_owner_and_unsafe_fill_ctx(request, &funs, &mut ctx.0)?;
+        if let (Some(tenant_id), Some(app_id)) = (tenant_id.0, app_id.0) {
+            ctx.0.own_paths = format!("{}/{}", tenant_id, app_id);
+        }
         let result = FlowModelServ::find_rel_states(tag.0.split(',').collect(), rel_template_id.0, &funs, &ctx.0).await?;
         task_handler_helper::execute_async_task(&ctx.0).await?;
         ctx.0.execute_task().await?;
@@ -212,8 +217,10 @@ impl FlowCiModelApi {
                 // 若不存在目标模板
                 if let Some(app_id) = FlowModelServ::get_app_id_by_ctx(&ctx.0) {
                     // 若当前处于应用层，则需要更新应用的关联模型
-                    if let Some(old_template_id) = FlowModelServ::find_rel_template_id(&funs, &ctx.0).await? {
-                        FlowRelServ::delete_simple_rel(&FlowRelKind::FlowAppTemplate, &app_id, &old_template_id, &funs, &ctx.0).await?;
+                    if let Some(old_template_ids) = FlowModelServ::find_rel_template_ids(&funs, &ctx.0).await? {
+                        for old_template_id in old_template_ids {
+                            FlowRelServ::delete_simple_rel(&FlowRelKind::FlowAppTemplate, &app_id, &old_template_id, &funs, &ctx.0).await?;
+                        }
                     }
                     FlowRelServ::add_simple_rel(
                         &FlowRelKind::FlowAppTemplate,
@@ -234,8 +241,10 @@ impl FlowCiModelApi {
         } else {
             // 复制操作，需删除应用和模板的关联关系
             if let Some(app_id) = FlowModelServ::get_app_id_by_ctx(&ctx.0) {
-                if let Some(old_template_id) = FlowModelServ::find_rel_template_id(&funs, &ctx.0).await? {
-                    FlowRelServ::delete_simple_rel(&FlowRelKind::FlowAppTemplate, &app_id, &old_template_id, &funs, &ctx.0).await?;
+                if let Some(old_template_ids) = FlowModelServ::find_rel_template_ids(&funs, &ctx.0).await? {
+                    for old_template_id in old_template_ids {
+                        FlowRelServ::delete_simple_rel(&FlowRelKind::FlowAppTemplate, &app_id, &old_template_id, &funs, &ctx.0).await?;
+                    }
                 }
             }
         }
@@ -266,6 +275,8 @@ impl FlowCiModelApi {
         check_without_owner_and_unsafe_fill_ctx(request, &funs, &mut ctx.0)?;
         funs.begin().await?;
         let result = FlowModelServ::copy_models_by_template_id(&from_template_id.0, &to_template_id.0, &funs, &ctx.0).await?;
+        // 添加或修改审批配置
+        FlowConfigServ::add_or_modify_root_config(from_template_id.0.clone(), Some(to_template_id.0.clone()), "review", &funs, &ctx.0).await?;
         funs.commit().await?;
         task_handler_helper::execute_async_task(&ctx.0).await?;
         ctx.0.execute_task().await?;
@@ -377,7 +388,7 @@ impl FlowCiModelApi {
         let mut funs = flow_constants::get_tardis_inst();
         check_without_owner_and_unsafe_fill_ctx(request, &funs, &mut ctx.0)?;
         funs.begin().await?;
-        FlowModelServ::batch_disable_model(req.0.rel_template_id, req.0.main, &funs, &ctx.0).await?;
+        FlowModelServ::batch_disable_model(req.0.rel_template_id, req.0.main, req.0.tags, &funs, &ctx.0).await?;
         funs.commit().await?;
         task_handler_helper::execute_async_task(&ctx.0).await?;
         ctx.0.execute_task().await?;
@@ -414,6 +425,19 @@ impl FlowCiModelApi {
         let funs = flow_constants::get_tardis_inst();
         check_without_owner_and_unsafe_fill_ctx(request, &funs, &mut ctx.0)?;
         FlowModelServ::init_reference_model(&funs, &ctx.0).await?;
+        task_handler_helper::execute_async_task(&ctx.0).await?;
+        ctx.0.execute_task().await?;
+        TardisResp::ok(Void)
+    }
+
+    /// 初始化复制模型（脚本）
+    #[oai(path = "/init_copy_model", method = "post")]
+    async fn init_copy_model(&self, req: Json<FlowModelInitCopyReq>, mut ctx: TardisContextExtractor, request: &Request) -> TardisApiResult<Void> {
+        let mut funs = flow_constants::get_tardis_inst();
+        check_without_owner_and_unsafe_fill_ctx(request, &funs, &mut ctx.0)?;
+        funs.begin().await?;
+        FlowModelServ::init_copy_model(&req, &funs, &ctx.0).await?;
+        funs.commit().await?;
         task_handler_helper::execute_async_task(&ctx.0).await?;
         ctx.0.execute_task().await?;
         TardisResp::ok(Void)

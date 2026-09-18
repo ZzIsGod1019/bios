@@ -675,6 +675,7 @@ pub async fn test(
             &vec![FlowInstFindStateAndTransitionsReq {
                 flow_inst_id: req_inst_id1.clone(),
                 vars: None,
+                sys_states: None,
             }],
         )
         .await;
@@ -703,6 +704,7 @@ pub async fn test(
             &vec![FlowInstFindStateAndTransitionsReq {
                 flow_inst_id: req_inst_id1.clone(),
                 vars: None,
+                sys_states: None,
             }],
         )
         .await;
@@ -1503,6 +1505,7 @@ async fn load_iam_data(search_client: &mut TestHttpClient, iam_client: &mut BIOS
                 set_cate_id: None,
                 kind: None,
                 sync_apps_group: None,
+                publish_system_ids: None,
             },
         )
         .await;
@@ -1521,6 +1524,7 @@ async fn load_iam_data(search_client: &mut TestHttpClient, iam_client: &mut BIOS
                 set_cate_id: None,
                 kind: None,
                 sync_apps_group: None,
+                publish_system_ids: None,
             },
         )
         .await;

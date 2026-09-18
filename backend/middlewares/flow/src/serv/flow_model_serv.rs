@@ -1,12 +1,13 @@
-use std::{collections::HashMap, vec};
+use std::{collections::{HashMap, HashSet}, vec};
 
 use async_recursion::async_recursion;
 
 use bios_basic::rbum::{
+    domain::rbum_item,
     dto::{
         rbum_filer_dto::{RbumBasicFilterReq, RbumItemRelFilterReq, RbumRelFilterReq},
         rbum_item_dto::{RbumItemKernelAddReq, RbumItemKernelModifyReq},
-        rbum_rel_dto::RbumRelDetailResp,
+        rbum_rel_dto::{RbumRelBoneResp, RbumRelDetailResp},
     },
     helper::rbum_scope_helper,
     rbum_enumeration::{RbumRelFromKind, RbumScopeLevelKind},
@@ -18,7 +19,7 @@ use bios_sdk_invoke::dto::search_item_dto::{
 use itertools::Itertools;
 use serde_json::Value;
 use tardis::{
-    TardisFuns, TardisFunsInst, basic::{dto::TardisContext, field::TrimString, result::TardisResult}, db::sea_orm::{
+    TardisFuns, TardisFunsInst, basic::{dto::TardisContext, field::TrimString, result::TardisResult}, chrono::Utc, db::sea_orm::{
         self, EntityName, Iden, Set, sea_query::{Alias, Cond, Expr, Query, SelectStatement}
     }, futures::future::join_all, log::{debug, error}, serde_json::json, tokio, web::web_resp::TardisPage
 };
@@ -28,7 +29,7 @@ use crate::{
     dto::{
         flow_cond_dto::BasicQueryCondInfo,
         flow_model_dto::{
-            FlowModelAddAndCopyModelReq, FlowModelAddReq, FlowModelAggResp, FlowModelAssociativeOperationKind, FlowModelBindNewStateReq, FlowModelBindStateReq, FlowModelDetailResp, FlowModelFIndOrCreatReq, FlowModelFilterReq, FlowModelFindRelStateResp, FlowModelKind, FlowModelMergeDataReq, FlowModelModifyReq, FlowModelRelTransitionExt, FlowModelRelTransitionKind, FlowModelStatus, FlowModelSummaryResp, FlowModelSyncModifiedFieldReq, FlowModelUnbindStateReq
+            FlowModelAddAndCopyModelReq, FlowModelAddReq, FlowModelAggResp, FlowModelAssociativeOperationKind, FlowModelBindNewStateReq, FlowModelBindStateReq, FlowModelDetailResp, FlowModelFIndOrCreatReq, FlowModelFilterReq, FlowModelFindRelStateResp, FlowModelInitCopyReq, FlowModelKind, FlowModelMergeDataReq, FlowModelModifyReq, FlowModelRelTransitionExt, FlowModelRelTransitionKind, FlowModelStateSortSigItem, FlowModelStatus, FlowModelSummaryResp, FlowModelSyncModifiedFieldReq, FlowModelUnbindStateReq
         },
         flow_model_version_dto::{
             FlowModelVersionAddReq, FlowModelVersionBindState, FlowModelVersionDetailResp, FlowModelVersionFilterReq, FlowModelVersionModifyReq, FlowModelVersionModifyState,
@@ -264,97 +265,46 @@ impl RbumItemCrudOperation<flow_model::ActiveModel, FlowModelAddReq, FlowModelMo
                     ctx,
                 )
                 .await?;
-                let main = add_req.main;
-                // 同步添加应用层模板
-                join_all(
-                    FlowRelServ::find_to_simple_rels(&FlowRelKind::FlowAppTemplate, rel_template_id, None, None, funs, ctx)
-                        .await?
-                        .into_iter()
-                        .map(|rel| async move {
-                            let mock_ctx = TardisContext {
-                                own_paths: if rel.rel_own_paths.contains("/") {
-                                    rel.rel_own_paths.clone()
-                                } else {
-                                    format!("{}/{}", ctx.own_paths, rel.rel_id)
-                                },
-                                ..ctx.clone()
-                            };
-                            if main {
-                                Self::copy_or_reference_main_model(
-                                    flow_model_id,
-                                    &FlowModelAssociativeOperationKind::Reference,
-                                    FlowModelKind::AsModel,
-                                    None,
-                                    &None,
-                                    None,
-                                    funs,
-                                    &mock_ctx,
-                                )
-                                .await
-                            } else {
-                                Self::copy_or_reference_non_main_model(
-                                    flow_model_id,
-                                    &FlowModelAssociativeOperationKind::Reference,
-                                    FlowModelKind::AsModel,
-                                    None,
-                                    None,
-                                    funs,
-                                    &mock_ctx,
-                                )
-                                .await
+                // 异步添加应用层模板
+                let flow_model_id_clone = flow_model_id.to_string();
+                let rel_template_id_clone = rel_template_id.clone();
+                let main_clone = add_req.main;
+                let ctx_clone = ctx.clone();
+                ctx.add_async_task(Box::new(move || {
+                    Box::pin(async move {
+                        let task_handle = tokio::spawn(async move {
+                            let funs = flow_constants::get_tardis_inst();
+                            if let Err(e) = Self::sync_add_app_models(&flow_model_id_clone, &rel_template_id_clone, main_clone, &funs, &ctx_clone).await {
+                                error!("Flow Model {} sync_add_app_models error:{:?}", flow_model_id_clone, e);
                             }
-                        })
-                        .collect_vec(),
-                )
-                .await
-                .into_iter()
-                .collect::<TardisResult<Vec<_>>>()?;
-                // 同步添加租户层模板
-                join_all(
-                    FlowRelServ::find_from_simple_rels(&FlowRelKind::FlowTemplateTemplate, &RbumRelFromKind::Other, rel_template_id, None, None, funs, ctx)
-                        .await?
-                        .into_iter()
-                        .map(|rel| async move {
-                            let rel_template_id = rel.rel_id.clone();
-                            let data_source = Self::find_data_source_by_template_id(&rel_template_id, funs, ctx).await?;
-                            let mock_ctx = TardisContext {
-                                own_paths: rel.rel_own_paths,
-                                ..ctx.clone()
-                            };
-                            if main {
-                                Self::copy_or_reference_main_model(
-                                    flow_model_id,
-                                    &FlowModelAssociativeOperationKind::Reference,
-                                    FlowModelKind::AsTemplateAndAsModel,
-                                    Some(rel_template_id),
-                                    &None,
-                                    data_source,
-                                    funs,
-                                    &mock_ctx,
-                                )
-                                .await
-                            } else {
-                                Self::copy_or_reference_non_main_model(
-                                    flow_model_id,
-                                    &FlowModelAssociativeOperationKind::Reference,
-                                    FlowModelKind::AsTemplateAndAsModel,
-                                    Some(rel_template_id),
-                                    data_source,
-                                    funs,
-                                    &mock_ctx,
-                                )
-                                .await
+                        });
+                        task_handle.await.unwrap();
+                        Ok(())
+                    })
+                }))
+                .await?;
+                // 异步添加租户层模板
+                let flow_model_id_clone = flow_model_id.to_string();
+                let rel_template_id_clone = rel_template_id.clone();
+                let main_clone = add_req.main;
+                let ctx_clone = ctx.clone();
+                ctx.add_async_task(Box::new(move || {
+                    Box::pin(async move {
+                        let task_handle = tokio::spawn(async move {
+                            let funs = flow_constants::get_tardis_inst();
+                            if let Err(e) = Self::sync_add_tenant_models(&flow_model_id_clone, &rel_template_id_clone, main_clone, &funs, &ctx_clone).await {
+                                error!("Flow Model {} sync_add_tenant_models error:{:?}", flow_model_id_clone, e);
                             }
-                        })
-                        .collect_vec(),
-                )
-                .await
-                .into_iter()
-                .collect::<TardisResult<Vec<_>>>()?;
+                        });
+                        task_handle.await.unwrap();
+                        Ok(())
+                    })
+                }))
+                .await?;
             }
         }
         if add_req.template && add_req.main && add_req.rel_model_id.clone().is_none_or(|id| id.is_empty()) {
-            FlowSearchClient::async_add_or_modify_model_search(flow_model_id, Box::new(false), funs, ctx).await?;
+            FlowSearchClient::async_add_or_modify_model_search(flow_model_id, false, funs, ctx).await?;
             FlowLogClient::add_ctx_task(
                 LogParamTag::DynamicLog,
                 Some(flow_model_id.to_string()),
@@ -437,6 +387,17 @@ impl RbumItemCrudOperation<flow_model::ActiveModel, FlowModelAddReq, FlowModelMo
     }
 
     async fn before_modify_item(flow_model_id: &str, modify_req: &mut FlowModelModifyReq, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<()> {
+        // 不论请求参数如何，触发了 modify 就更新 kernel 表的 update_time 为当前时间
+        funs.db()
+            .update_one(
+                rbum_item::ActiveModel {
+                    id: Set(flow_model_id.to_string()),
+                    update_time: Set(Utc::now()),
+                    ..Default::default()
+                },
+                ctx,
+            )
+            .await?;
         let current_model = Self::get_item(
             flow_model_id,
             &FlowModelFilterReq {
@@ -565,7 +526,7 @@ impl RbumItemCrudOperation<flow_model::ActiveModel, FlowModelAddReq, FlowModelMo
             .collect::<TardisResult<Vec<()>>>()?;
         }
         if model_detail.template && model_detail.main && model_detail.rel_model_id.is_empty() {
-            FlowSearchClient::async_add_or_modify_model_search(flow_model_id, Box::new(true), funs, ctx).await?;
+            FlowSearchClient::async_add_or_modify_model_search(flow_model_id, true, funs, ctx).await?;
             FlowLogClient::add_ctx_task(
                 LogParamTag::DynamicLog,
                 Some(flow_model_id.to_string()),
@@ -595,30 +556,47 @@ impl RbumItemCrudOperation<flow_model::ActiveModel, FlowModelAddReq, FlowModelMo
 
         // 同步修改所有引用的下级模型
         if model_detail.template {
-            let child_models = Self::find_detail_items(
-                &FlowModelFilterReq {
-                    basic: RbumBasicFilterReq {
-                        own_paths: Some("".to_string()),
-                        with_sub_own_paths: true,
+            let ctx_clone = ctx.clone();
+            let model_detail_clone = model_detail.clone();
+            let modify_req_clone = modify_req.clone();
+            let flow_model_id = flow_model_id.to_string();
+            let sync_version = modify_req.current_version_id.is_some() && !model_detail.main;
+            tokio::spawn(async move {
+                let funs = flow_constants::get_tardis_inst();
+                match Self::find_detail_items(
+                    &FlowModelFilterReq {
+                        basic: RbumBasicFilterReq {
+                            own_paths: Some("".to_string()),
+                            with_sub_own_paths: true,
+                            ..Default::default()
+                        },
+                        rel_model_ids: Some(vec![flow_model_id]),
                         ..Default::default()
                     },
-                    rel_model_ids: Some(vec![flow_model_id.to_string()]),
-                    ..Default::default()
-                },
-                None,
-                None,
-                funs,
-                ctx,
-            )
-            .await?;
-            for child_model in child_models {
-                if modify_req.current_version_id.is_some() && !model_detail.main {
-                    // 当父模板修改启用版本时，为子模板创建对应的版本同时启用，以保证和父模板的配置同步
-                    Self::sync_add_version_child_model(&child_model, &model_detail, funs, ctx).await?;
-                } else {
-                    Self::sync_modify_child_model(&child_model, &model_detail, modify_req, funs, ctx).await?;
+                    None,
+                    None,
+                    &funs,
+                    &ctx_clone,
+                )
+                .await
+                {
+                    Ok(child_models) => {
+                        for child_model in child_models {
+                            if sync_version {
+                                // 当父模板修改启用版本时，为子模板创建对应的版本同时启用，以保证和父模板的配置同步
+                                if let Err(e) = Self::sync_add_version_child_model(&child_model, &model_detail_clone, &funs, &ctx_clone).await {
+                                    error!("Flow Model {} sync_add_version_child_model error:{:?}", child_model.id, e);
+                                }
+                            } else if let Err(e) =
+                                Self::sync_modify_child_model(&child_model, &model_detail_clone, &modify_req_clone, &funs, &ctx_clone).await
+                            {
+                                error!("Flow Model {} sync_modify_child_model error:{:?}", child_model.id, e);
+                            }
+                        }
+                    }
+                    Err(e) => error!("Flow Model find child models error:{:?}", e),
                 }
-            }
+            });
         }
 
         // 同步scope_level和disabled字段到相关的version数据
@@ -1314,6 +1292,7 @@ impl FlowModelServ {
             rel_template_ids: rel_template_id.map(|r| vec![r]),
             template: kind != FlowModelKind::AsModel,
             data_source,
+            default: Some(false),
             ..rel_model.clone().into()
         };
         add_req.set_edit_state(false);
@@ -1368,6 +1347,7 @@ impl FlowModelServ {
             rel_template_ids: rel_template_id.clone().map(|r| vec![r]),
             template: kind != FlowModelKind::AsModel,
             data_source,
+            default: Some(false),
             ..rel_model.clone().into()
         };
         if kind == FlowModelKind::AsModel {
@@ -1602,7 +1582,12 @@ impl FlowModelServ {
             model_details
         };
 
-        Ok(result.first().cloned())
+        Ok(result.into_iter().max_by(|a, b| {
+            a.rel_model_id
+                .is_empty()
+                .cmp(&b.rel_model_id.is_empty())
+                .then_with(|| a.update_time.cmp(&b.update_time))
+        }))
     }
     /// 根据own_paths和rel_template_id获取模型ID
     /// 规则1：如果rel_template_id不为空，优先通过rel_template_id查找rel表类型为FlowModelTemplate关联的模型ID，找不到则直接返回默认模板ID
@@ -1781,7 +1766,7 @@ impl FlowModelServ {
 
     // 批量关闭模型
     #[async_recursion]
-    pub async fn batch_disable_model(rel_template_id: Option<String>, main: Option<bool>, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<()> {
+    pub async fn batch_disable_model(rel_template_id: Option<String>, main: Option<bool>, tags: Option<Vec<String>>, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<()> {
         let models = Self::find_items(
             &FlowModelFilterReq {
                 basic: RbumBasicFilterReq {
@@ -1790,6 +1775,7 @@ impl FlowModelServ {
                 },
                 rel_template_id,
                 main,
+                tags: tags.clone(),
                 ..Default::default()
             },
             None,
@@ -1798,23 +1784,7 @@ impl FlowModelServ {
             ctx,
         )
         .await?;
-        // clean non-main flow model
         for model in models {
-            // abort instances with current ctx
-            let rel_version_ids = FlowModelVersionServ::find_id_items(
-                &FlowModelVersionFilterReq {
-                    rel_model_ids: Some(vec![model.id.clone()]),
-                    ..Default::default()
-                },
-                None,
-                None,
-                funs,
-                ctx,
-            )
-            .await?;
-            for rel_version_id in rel_version_ids {
-                FlowInstServ::unsafe_abort_inst(&rel_version_id, funs, ctx).await?;
-            }
             Self::modify_model(
                 &model.id,
                 &mut FlowModelModifyReq {
@@ -1848,7 +1818,7 @@ impl FlowModelServ {
                     own_paths: child_model.own_paths.clone(),
                     ..Default::default()
                 };
-                Self::batch_disable_model(child_model.rel_template_ids.first().cloned(), Some(child_model.main), funs, &mock_ctx).await?;
+                Self::batch_disable_model(child_model.rel_template_ids.first().cloned(), Some(child_model.main), tags.clone(), funs, &mock_ctx).await?;
                 child_own_paths.push(child_model.own_paths.clone());
             }
         }
@@ -1980,6 +1950,82 @@ impl FlowModelServ {
         rbum_scope_helper::get_path_item(2, &ctx.own_paths)
     }
 
+    /// 同步添加应用层模板：将模型引用到关联该模板的各应用
+    async fn sync_add_app_models(flow_model_id: &str, rel_template_id: &str, main: bool, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<()> {
+        for rel in FlowRelServ::find_to_simple_rels(&FlowRelKind::FlowAppTemplate, rel_template_id, None, None, funs, ctx).await? {
+            let mock_ctx = TardisContext {
+                own_paths: if rel.rel_own_paths.contains("/") {
+                    rel.rel_own_paths.clone()
+                } else {
+                    format!("{}/{}", ctx.own_paths, rel.rel_id)
+                },
+                ..ctx.clone()
+            };
+            if main {
+                Self::copy_or_reference_main_model(
+                    flow_model_id,
+                    &FlowModelAssociativeOperationKind::Reference,
+                    FlowModelKind::AsModel,
+                    None,
+                    &None,
+                    None,
+                    funs,
+                    &mock_ctx,
+                )
+                .await?;
+            } else {
+                Self::copy_or_reference_non_main_model(
+                    flow_model_id,
+                    &FlowModelAssociativeOperationKind::Reference,
+                    FlowModelKind::AsModel,
+                    None,
+                    None,
+                    funs,
+                    &mock_ctx,
+                )
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// 同步添加租户层模板：将模型引用到关联该模板的各租户模板
+    async fn sync_add_tenant_models(flow_model_id: &str, rel_template_id: &str, main: bool, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<()> {
+        for rel in FlowRelServ::find_from_simple_rels(&FlowRelKind::FlowTemplateTemplate, &RbumRelFromKind::Other, rel_template_id, None, None, funs, ctx).await? {
+            let rel_template_id = rel.rel_id.clone();
+            let data_source = Self::find_data_source_by_template_id(&rel_template_id, funs, ctx).await?;
+            let mock_ctx = TardisContext {
+                own_paths: rel.rel_own_paths,
+                ..ctx.clone()
+            };
+            if main {
+                Self::copy_or_reference_main_model(
+                    flow_model_id,
+                    &FlowModelAssociativeOperationKind::Reference,
+                    FlowModelKind::AsTemplateAndAsModel,
+                    Some(rel_template_id),
+                    &None,
+                    data_source,
+                    funs,
+                    &mock_ctx,
+                )
+                .await?;
+            } else {
+                Self::copy_or_reference_non_main_model(
+                    flow_model_id,
+                    &FlowModelAssociativeOperationKind::Reference,
+                    FlowModelKind::AsTemplateAndAsModel,
+                    Some(rel_template_id),
+                    data_source,
+                    funs,
+                    &mock_ctx,
+                )
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
     async fn sync_add_version_child_model(child_model: &FlowModelDetailResp, parent_model: &FlowModelDetailResp, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<()> {
         let mock_ctx = TardisContext {
             own_paths: child_model.own_paths.clone(),
@@ -2065,6 +2111,12 @@ impl FlowModelServ {
                                         .unwrap_or_default();
                                     let mut new_vars_collect = vars_collect;
                                     new_vars_collect.extend(child_var_collects);
+                                    // 去重：name相同的元素保留一个
+                                    let mut seen_names = HashSet::new();
+                                    new_vars_collect = new_vars_collect
+                                        .into_iter()
+                                        .filter(|var| seen_names.insert(var.name.clone()))
+                                        .collect();
                                     modify_transition.vars_collect = Some(new_vars_collect);
                                 }
                             }
@@ -2086,6 +2138,21 @@ impl FlowModelServ {
                                     delete_transitions.push(trans_id);
                                 };
                             }
+                        }
+                    }
+                    if let Some(add_transitions) = &mut modify_state.add_transitions {
+                        let add_transitions_cp = add_transitions.clone();
+                        add_transitions.clear();
+                        for add_transition in add_transitions_cp {
+                            if child_model_transitions
+                                .iter()
+                                .find(|child_tran| {
+                                    child_tran.from_flow_state_id == add_transition.from_flow_state_id
+                                        && child_tran.to_flow_state_id == add_transition.to_flow_state_id
+                                }).is_none()
+                            {
+                                add_transitions.push(add_transition);
+                            };
                         }
                     }
                 }
@@ -2211,7 +2278,7 @@ impl FlowModelServ {
     }
 
     pub async fn sync_modified_field(req: &FlowModelSyncModifiedFieldReq, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<()> {
-        let model_ids = if Self::get_app_id_by_ctx(ctx).is_some() {
+        let approve_model_ids = if Self::get_app_id_by_ctx(ctx).is_some() {
             Self::find_id_items(
                 &FlowModelFilterReq {
                     basic: RbumBasicFilterReq {
@@ -2247,9 +2314,9 @@ impl FlowModelServ {
             )
             .await?
         };
-        let model_versions = FlowModelVersionServ::find_detail_items(
+        let approve_model_versions = FlowModelVersionServ::find_detail_items(
             &FlowModelVersionFilterReq {
-                rel_model_ids: Some(model_ids),
+                rel_model_ids: Some(approve_model_ids),
                 ..Default::default()
             },
             None,
@@ -2258,8 +2325,8 @@ impl FlowModelServ {
             ctx,
         )
         .await?;
-        for model_version in model_versions {
-            let states = model_version.states();
+        for approve_model_version in approve_model_versions {
+            let states = approve_model_version.states();
             for state in states {
                 let add_default_conf = match state.state_kind {
                     FlowStateKind::Form => state.kind_conf.clone().unwrap_or_default().form.unwrap_or_default().add_default_field.unwrap_or_default(),
@@ -2299,6 +2366,56 @@ impl FlowModelServ {
                     ctx,
                 )
                 .await?;
+            }
+        }
+
+        if let Some(main_model) = if Self::get_app_id_by_ctx(ctx).is_some() {
+            Self::find_one_detail_item(
+                &FlowModelFilterReq {
+                    basic: RbumBasicFilterReq {
+                        enabled: Some(true),
+                        ..Default::default()
+                    },
+                    main: Some(true),
+                    tags: Some(vec![req.tag.clone()]),
+                    ..Default::default()
+                },
+                funs,
+                ctx,
+            )
+            .await?
+        } else {
+            Self::find_one_detail_item(
+                &FlowModelFilterReq {
+                    basic: RbumBasicFilterReq {
+                        enabled: Some(true),
+                        ..Default::default()
+                    },
+                    main: Some(true),
+                    rel_template_id: req.rel_template_id.clone(),
+                    tags: Some(vec![req.tag.clone()]),
+                    ..Default::default()
+                },
+                funs,
+                ctx,
+            )
+            .await?
+        } {
+            let transitions = main_model.transitions();
+            let delete_fields = req.delete_fields.clone().unwrap_or_default();
+            let mut modify_transitions = vec![];
+            for transition in transitions {
+                if let Some(vars_collect) = transition.vars_collect() {
+                    let new_vars_collect = vars_collect.into_iter().filter(|var| !delete_fields.contains(&var.name)).collect_vec();
+                    modify_transitions.push(FlowTransitionModifyReq {
+                        id: transition.id.clone().into(),
+                        vars_collect: Some(new_vars_collect),
+                        ..Default::default()
+                    });
+                }
+            }
+            if !modify_transitions.is_empty() {
+                FlowTransitionServ::modify_transitions(&main_model.current_version_id, &modify_transitions, funs, ctx).await?;
             }
         }
 
@@ -2431,15 +2548,15 @@ impl FlowModelServ {
         .await?;
         for flow_model_id in flow_model_ids {
             if !search_models.contains(&flow_model_id) {
-                FlowSearchClient::async_add_or_modify_model_search(&flow_model_id, Box::new(false), funs, ctx).await?;
+                FlowSearchClient::async_add_or_modify_model_search(&flow_model_id, false, funs, ctx).await?;
             }
         }
         Ok(())
     }
 
-    pub async fn find_rel_template_id(funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<Option<String>> {
+    pub async fn find_rel_template_ids(funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<Option<Vec<String>>> {
         if let Some(app_id) = Self::get_app_id_by_ctx(ctx) {
-            Ok(FlowRelServ::find_from_simple_rels(&FlowRelKind::FlowAppTemplate, &RbumRelFromKind::Item, &app_id, None, None, funs, ctx).await?.pop().map(|r| r.rel_id))
+            Ok(Some(FlowRelServ::find_from_simple_rels(&FlowRelKind::FlowAppTemplate, &RbumRelFromKind::Item, &app_id, None, None, funs, ctx).await?.into_iter().map(|r| r.rel_id).collect_vec()))
         } else {
             Ok(None)
         }
@@ -2817,5 +2934,196 @@ impl FlowModelServ {
         add_req.set_edit_state(true); // 复制的模板所有配置项皆可编辑
         let new_model_id = Self::add_item(&mut add_req, funs, ctx).await?;
         Self::get_item_detail_aggs(&new_model_id, false, funs, ctx).await
+    }
+
+    // 初始化复制模型（脚本）
+    pub async fn init_copy_model(req: &FlowModelInitCopyReq, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<()> {
+        let rel_main_model = Self::find_one_detail_item(
+            &FlowModelFilterReq {
+                basic: RbumBasicFilterReq {
+                    ids: Some(vec![req.rel_model_id.clone()]),
+                    enabled: Some(true),
+                    own_paths: Some("".to_string()),
+                    with_sub_own_paths: true,
+                    ..Default::default()
+                },
+                main: Some(true),
+                ..Default::default()
+            },
+            funs,
+            ctx,
+        )
+        .await?.ok_or_else(|| {
+            funs.err().not_found(
+                &Self::get_obj_name(),
+                "init_copy_model",
+                "flow model is not found",
+                "404-model-not-found",
+            )
+        })?;
+        for (rel_template_id, own_paths) in &req.rel_template_ids {
+            let mock_ctx = TardisContext {
+                own_paths: own_paths.clone(),
+                ..ctx.clone()
+            };
+            let new_model = FlowModelServ::copy_or_reference_main_model(
+                &rel_main_model.id,
+                &FlowModelAssociativeOperationKind::ReferenceOrCopy,
+                FlowModelKind::AsTemplateAndAsModel,
+                Some(rel_template_id.clone()),
+                &None,
+                None,
+                funs,
+                &mock_ctx,
+            )
+            .await?;
+            if req.sync_inst {
+                let mut update_states = HashMap::new();
+                for state in rel_main_model.states() {
+                    update_states.insert(state.id.clone(), state.id.clone());
+                }
+                FlowInstServ::batch_update_when_switch_model(&new_model, &Some(update_states), funs, ctx).await?;
+            }
+        }
+        for own_path in &req.own_path {
+            let mock_ctx = TardisContext {
+                own_paths: own_path.clone(),
+                ..ctx.clone()
+            };
+            let new_model = FlowModelServ::copy_or_reference_main_model(&rel_main_model.id, &FlowModelAssociativeOperationKind::Copy, FlowModelKind::AsModel, None, &None, None, funs, &mock_ctx).await?;
+            if req.sync_inst {
+                let mut update_states = HashMap::new();
+                for state in rel_main_model.states() {
+                    update_states.insert(state.id.clone(), state.id.clone());
+                }
+                FlowInstServ::batch_update_when_switch_model(&new_model, &Some(update_states), funs, &mock_ctx).await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// [临时脚本] 扫描所有 main=true 的模型，消除重复的 state sort，返回已修复的模型 ID 列表。
+    pub async fn script_fix_duplicate_main_model_state_sort(funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<Vec<String>> {
+        let mut page = 1u32;
+        let page_size = 100u32;
+        let mut fixed_model_ids = vec![];
+        loop {
+            let records = Self::paginate_detail_items(
+                &FlowModelFilterReq {
+                    basic: RbumBasicFilterReq {
+                        own_paths: Some("".to_string()),
+                        with_sub_own_paths: true,
+                        ..Default::default()
+                    },
+                    main: Some(true),
+                    rel_model_ids: Some(vec!["".to_string()]),
+                    ..Default::default()
+                },
+                page,
+                page_size,
+                None,
+                Some(true),
+                funs,
+                ctx,
+            )
+            .await?
+            .records;
+            if records.is_empty() {
+                break;
+            }
+            for model in records {
+                let rel = FlowRelServ::find_from_simple_rels(
+                    &FlowRelKind::FlowModelState,
+                    &RbumRelFromKind::Item,
+                    &model.current_version_id,
+                    None,
+                    None,
+                    funs,
+                    ctx,
+                )
+                .await?;
+                if Self::is_state_sort_duplicate(rel.clone()) {
+                    let model_ctx = TardisContext {
+                        own_paths: model.own_paths,
+                        ..ctx.clone()
+                    };
+                    Self::fix_model_duplicate_state_sort(&model.id, rel, funs, &model_ctx).await?;
+                    fixed_model_ids.push(model.id);
+                }
+            }
+            page += 1;
+        }
+
+        Ok(fixed_model_ids)
+    }
+
+    /// 按现有 sort 顺序重排为 1, 2, 3...，消除重复 sort（如 a0b0c1d1e1 → a1b2c3d4e5）
+    async fn fix_model_duplicate_state_sort(model_id: &str, rels: Vec<RbumRelBoneResp>, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<()> {
+        struct FlowStateRelExt {
+            id: String,
+            sort: i64,
+        }
+        let mut states = rels
+        .into_iter()
+        .map(|rel| {
+            let ext = if rel.ext.is_empty() {
+                FlowStateRelModelExt::default()
+            } else {
+                TardisFuns::json.str_to_obj::<FlowStateRelModelExt>(&rel.ext).unwrap_or_default()
+            };
+            FlowStateRelExt {
+                id: rel.rel_id,
+                sort: ext.sort
+            }
+        })
+        .collect_vec();
+        states.sort_by_key(|ext| ext.sort);
+        let modify_states = states
+            .iter()
+            .enumerate()
+            .map(|(i, state)| FlowModelVersionModifyState {
+                id: Some(state.id.clone()),
+                modify_rel: Some(FlowStateRelModelModifyReq {
+                    id: state.id.clone(),
+                    sort: Some((i as i64) + 1),
+                    show_btns: None,
+                    is_edit: None,
+                }),
+                modify_state: None,
+                add_transitions: None,
+                modify_transitions: None,
+                delete_transitions: None,
+            })
+            .collect_vec();
+        Self::modify_model(
+            model_id,
+            &mut FlowModelModifyReq {
+                modify_version: Some(FlowModelVersionModifyReq {
+                    modify_states: Some(modify_states),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            funs,
+            ctx,
+        )
+        .await
+    }
+
+    fn is_state_sort_duplicate(rels: Vec<RbumRelBoneResp>) -> bool {
+        let mut states_ext = rels
+            .into_iter()
+            .map(|rel| {
+                if rel.ext.is_empty() {
+                    FlowStateRelModelExt::default()
+                } else {
+                    TardisFuns::json.str_to_obj::<FlowStateRelModelExt>(&rel.ext).unwrap_or_default()
+                }
+            })
+            .collect_vec();
+        states_ext.sort_by_key(|ext| ext.sort);
+        let sorts: Vec<i64> = states_ext.iter().map(|ext| ext.sort).collect();
+        let has_duplicate_sort = sorts.len() != sorts.iter().copied().collect::<HashSet<_>>().len();
+        has_duplicate_sort
     }
 }

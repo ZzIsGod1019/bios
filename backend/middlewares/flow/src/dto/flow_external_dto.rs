@@ -1,11 +1,15 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tardis::web::poem_openapi::{
-    self,
-    types::{ParseFromJSON, ToJSON},
+use tardis::{
+    chrono::{DateTime, Utc},
+    web::poem_openapi::{
+        self,
+        types::{ParseFromJSON, ToJSON},
+    },
 };
 
 use super::{
+    flow_inst_dto::FlowInstStateKind,
     flow_state_dto::{FlowGuardConf, FlowSysStateKind},
     flow_transition_dto::FlowTransitionActionByVarChangeInfoChangedKind,
 };
@@ -23,6 +27,10 @@ pub struct FlowExternalReq {
     ///
     /// 关联的[枚举](FlowExternalCallbackOp)
     pub callback_op: Option<FlowExternalCallbackOp>,
+    /// Associated [enum](FlowExternalCallbackOp)
+    ///
+    /// 关联的[枚举](FlowExternalCallbackOp)
+    pub idp_approve_operation_enum: Option<FlowExternalApproveOp>,
     /// The tag corresponding to the current business
     ///
     /// 当前业务对应的 tag
@@ -43,6 +51,10 @@ pub struct FlowExternalReq {
     ///
     /// 修改后的状态ID
     pub target_state_color: Option<String>,
+    /// Modified State ID
+    ///
+    /// 修改后的状态ID
+    pub target_state_id: Option<String>,
     /// Associated [enum](super::flow_state_dto::FlowSysStateKind)
     ///
     /// 关联的[枚举](super::flow_state_dto::FlowSysStateKind)
@@ -86,6 +98,23 @@ pub struct FlowExternalReq {
     ///
     /// guard Config
     pub guard_conf: Option<FlowGuardConf>,
+    /// 子审批流信息列表（审批通过/驳回时传入）
+    ///
+    /// Child approval instance infos
+    pub child_approve_insts: Vec<FlowExternalChildApproveInst>,
+}
+
+/// 子审批流通知信息
+///
+/// Child approval instance notify info
+#[derive(Serialize, Deserialize, Debug, Default, Clone, poem_openapi::Object)]
+pub struct FlowExternalChildApproveInst {
+    /// 子审批流关联业务ID
+    pub rel_business_obj_id: String,
+    /// 子审批流结果
+    pub result: Option<FlowInstStateKind>,
+    /// 子审批流结束时间
+    pub finish_time: Option<DateTime<Utc>>,
 }
 
 /// Type of request initiated, ex: query field, modification field, status change notification...
@@ -108,6 +137,8 @@ pub enum FlowExternalKind {
     FetchAuthAccount,
     /// 更新关联关系
     UpdateRelationship,
+    /// 审批过程中的状态变更
+    ApproveStatusChange,
 }
 
 /// When kind is ModifyField, the field is modified in a specific way, for example: validate the content, post action, precondition trigger ...
@@ -125,6 +156,19 @@ pub enum FlowExternalCallbackOp {
     ConditionalTrigger,
     /// 自动流转
     Auto,
+}
+
+/// When kind is ApproveStatusChange, the field is modified in a specific way, for example: validate the content, post action, precondition trigger ...
+///
+/// 当 kind 为 ApproveStatusChange 时，字段被修改的具体操作方式，例：验证内容，后置动作，前置条件触发..
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize, Serialize, poem_openapi::Enum)]
+pub enum FlowExternalApproveOp {
+    /// 审批发起
+    ApproveStart,
+    /// 审批通过
+    ApprovePass,
+    /// 审批驳回
+    ApproveRejection,
 }
 
 /// 扩展字段
@@ -192,6 +236,9 @@ pub struct FlowExternalDeleteRelObjResp {}
 
 #[derive(Default, Serialize, Deserialize, Debug, poem_openapi::Object)]
 pub struct FlowExternalUpdateRelationshipResp {}
+
+#[derive(Default, Serialize, Deserialize, Debug, poem_openapi::Object)]
+pub struct FlowExternalApproveStatusChangeResp {}
 
 #[derive(Default, Serialize, Deserialize, Debug, poem_openapi::Object)]
 pub struct FlowExternalFetchAuthAccountResp {

@@ -26,9 +26,9 @@ impl IamCpCertOAuth2Serv {
         ip: Option<String>,
         funs: &TardisFunsInst,
     ) -> TardisResult<IamAccountInfoResp> {
-        let oauth_info = IamCertOAuth2Serv::get_or_add_account(cert_supplier, login_req.code.as_ref(), &login_req.tenant_id.to_string(), funs).await?;
+        let oauth_info = IamCertOAuth2Serv::get_or_add_account(cert_supplier, login_req.code.as_ref(), &login_req.tenant_id.clone().unwrap_or_default(), funs).await?;
         IamCertServ::package_tardis_context_and_resp(
-            Some(login_req.tenant_id.clone()),
+            login_req.tenant_id.clone(),
             &oauth_info.0,
             Some(IamCertTokenKind::TokenDefault.to_string()),
             Some(oauth_info.1),
@@ -36,5 +36,48 @@ impl IamCpCertOAuth2Serv {
             funs,
         )
         .await
+    }
+
+    /// 手动绑定外部 OAuth2 身份到当前登录账号
+    ///
+    /// 用于已登录用户首次登录时主动关联两边账号；账号取自当前登录上下文 `ctx.owner`，返回绑定的 open_id。
+    pub async fn bind(cert_supplier: IamCertOAuth2Supplier, login_req: &IamCpOAuth2LoginReq, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<String> {
+        IamCertOAuth2Serv::bind_cert_account(cert_supplier, login_req.code.as_ref(), &login_req.tenant_id.clone().unwrap_or_default(), &ctx.owner, funs, ctx).await
+    }
+
+    /// 判断外部 OAuth2 身份（open_id）是否已绑定到本地账号
+    ///
+    /// 传入 OAuth2 对应的用户 id（open_id），已绑定返回 `true`，未绑定返回 `false`。
+    pub async fn is_bound(cert_supplier: IamCertOAuth2Supplier, open_id: &str, tenant_id: &str, funs: &TardisFunsInst) -> TardisResult<bool> {
+        IamCertOAuth2Serv::is_open_id_bound(cert_supplier, open_id, tenant_id, funs).await
+    }
+
+    /// 获取当前登录账号已缓存的 Provider token
+    ///
+    /// 账号取自当前登录上下文 `ctx.owner`，租户取自 `ctx.own_paths`。
+    pub async fn get_provider_token(
+        cert_supplier: IamCertOAuth2Supplier,
+        funs: &TardisFunsInst,
+        ctx: &TardisContext,
+    ) -> TardisResult<crate::basic::serv::iam_cert_oauth2_serv::IamCertOAuth2TokenInfo> {
+        IamCertOAuth2Serv::get_provider_token(cert_supplier, &ctx.owner, &ctx.own_paths, funs).await
+    }
+
+    /// token 置换：用当前登录账号已缓存的 refresh_token 向 Provider 换取新的 access_token
+    ///
+    /// 账号取自当前登录上下文 `ctx.owner`，租户取自 `ctx.own_paths`。
+    pub async fn refresh_provider_token(
+        cert_supplier: IamCertOAuth2Supplier,
+        funs: &TardisFunsInst,
+        ctx: &TardisContext,
+    ) -> TardisResult<crate::basic::serv::iam_cert_oauth2_serv::IamCertOAuth2TokenInfo> {
+        IamCertOAuth2Serv::refresh_provider_token(cert_supplier, &ctx.owner, &ctx.own_paths, funs).await
+    }
+
+    /// 通过当前登录账号已缓存的 access_token 向 Provider 查询用户信息
+    ///
+    /// 账号取自当前登录上下文 `ctx.owner`，租户取自 `ctx.own_paths`，返回 Provider 原始用户信息 JSON。
+    pub async fn get_provider_user_info(cert_supplier: IamCertOAuth2Supplier, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<tardis::serde_json::Value> {
+        IamCertOAuth2Serv::get_provider_user_info(cert_supplier, &ctx.owner, &ctx.own_paths, funs).await
     }
 }

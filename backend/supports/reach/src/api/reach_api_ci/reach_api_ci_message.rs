@@ -7,6 +7,7 @@ use tardis::web::poem::Request;
 use tardis::web::poem_openapi;
 use tardis::web::poem_openapi::payload::Json;
 use tardis::web::web_resp::{TardisApiResult, TardisResp, Void};
+use std::collections::HashSet;
 
 use crate::dto::*;
 use crate::reach_constants::*;
@@ -42,11 +43,25 @@ impl ReachMessageCiApi {
     pub async fn message_batch_send(&self, body: Json<Vec<ReachMsgSendReq>>, request: &Request, ctx: TardisContextExtractor) -> TardisApiResult<Void> {
         let mut ctx = ctx.0;
         let funs = get_tardis_inst();
-        let body = body.0;
+        let mut body = body.0;
         check_without_owner_and_unsafe_fill_ctx(request, &funs, &mut ctx)?;
+        
+        deduplicate_send_requests(&mut body);
+        
         for send_req in body {
             message_send(send_req, &funs, &ctx).await?;
         }
+        TardisResp::ok(VOID)
+    }
+
+    /// add send task
+    /// 添加发送任务
+    #[oai(method = "put", path = "/task/add")]
+    #[tardis::log::instrument(skip_all, fields(module = "reach"))]
+    pub async fn add_send_task(&self, mut body: Json<ReachMessageAddSendTaskReq>, request: &Request, mut ctx: TardisContextExtractor) -> TardisApiResult<Void> {
+        let funs = get_tardis_inst();
+        check_without_owner_and_unsafe_fill_ctx(request, &funs, &mut ctx.0)?;
+        add_send_task(&mut body.0, &funs, &ctx.0).await?;
         TardisResp::ok(VOID)
     }
 }

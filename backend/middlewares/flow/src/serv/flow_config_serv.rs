@@ -38,14 +38,14 @@ impl FlowConfigServ {
 
     pub async fn get_config(funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<Option<TardisPage<KvItemSummaryResp>>> {
         let prefix = format!("{}:config:", flow_constants::DOMAIN_CODE);
-        let mut result = SpiKvClient::match_items_by_key_prefix(prefix.clone(), None, 1, 100, Some(false), funs, ctx).await?;
+        let mut result = SpiKvClient::match_items_by_key_prefix(prefix.clone(), None, 1, 100, Some(false), None, funs, ctx).await?;
         result.as_mut().map(|configs| configs.records.iter_mut().map(|config| config.key = config.key.replace(&prefix, "")).collect::<Vec<_>>());
         Ok(result)
     }
 
     // 获取父级配置 租户id:项目id:项目模板id:review_config
     pub async fn get_root_config(root_tag: &str, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<Vec<FlowRootConfigResp>> {
-        let key = if let Some(mut template_id) = FlowModelServ::find_rel_template_id(funs, ctx).await? {
+        let key = if let Some(mut template_id) = FlowModelServ::find_rel_template_ids(funs, ctx).await?.unwrap_or_default().pop() {
             // 引用的模板，则向上获取根模板ID的配置
             while let Some(p_template_id) = FlowRelServ::find_to_simple_rels(&FlowRelKind::FlowTemplateTemplate, &template_id, None, None, funs, ctx).await?.pop().map(|r| r.rel_id)
             {
