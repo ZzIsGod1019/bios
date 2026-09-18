@@ -7,7 +7,7 @@ use bios_basic::rbum::dto::rbum_filer_dto::{RbumBasicFilterReq, RbumItemFilterFe
 
 use crate::{
     basic::dto::iam_app_dto::IamAppKind,
-    iam_enumeration::{IamAccountStatusKind, IamResKind, IamRoleKind, IamSubDeployHostKind},
+    iam_enumeration::{IamAccountStatusKind, IamResKind, IamPermKind, IamRoleKind, IamSubDeployHostKind},
 };
 
 #[derive(poem_openapi::Object, Serialize, Deserialize, Debug, Clone, Default)]
@@ -138,6 +138,8 @@ pub struct IamResFilterReq {
     pub rel: Option<RbumItemRelFilterReq>,
     pub rel2: Option<RbumItemRelFilterReq>,
     pub kind: Option<IamResKind>,
+    /// 资源权限类型，read 为只读，all 为全部权限
+    pub perm_kind: Option<IamPermKind>,
     pub icon: Option<String>,
     pub sort: Option<i64>,
     pub method: Option<String>,
@@ -160,6 +162,8 @@ impl RbumItemFilterFetcher for IamResFilterReq {
 pub struct IamRoleFilterReq {
     pub basic: RbumBasicFilterReq,
     pub kind: Option<IamRoleKind>,
+    /// 角色权限类型，read 为只读，all 为全部权限
+    pub perm_kind: Option<IamPermKind>,
     pub in_base: Option<bool>,
     pub in_embed: Option<bool>,
     pub extend_role_id: Option<String>,

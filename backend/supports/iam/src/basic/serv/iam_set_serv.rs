@@ -21,11 +21,11 @@ use tardis::serde_json::json;
 use tardis::web::web_resp::TardisPage;
 use tardis::{TardisFuns, TardisFunsInst};
 
-use crate::basic::dto::iam_filer_dto::IamAccountFilterReq;
+use crate::basic::dto::iam_filer_dto::{IamAccountFilterReq, IamResFilterReq, IamRoleFilterReq};
 use crate::basic::dto::iam_set_dto::{IamResSetTreeExtResp, IamResSetTreeResp, IamSetCateAddReq, IamSetCateModifyReq, IamSetItemAddReq};
 use crate::iam_config::{IamBasicConfigApi, IamConfig};
 use crate::iam_constants::{RBUM_SCOPE_LEVEL_APP, RBUM_SCOPE_LEVEL_TENANT};
-use crate::iam_enumeration::{IamRelKind, IamSetCateKind, IamSetKind};
+use crate::iam_enumeration::{IamPermKind, IamRelKind, IamSetCateKind, IamSetKind};
 
 use super::clients::iam_kv_client::IamKvClient;
 use super::clients::iam_log_client::{IamLogClient, LogParamTag};
@@ -34,6 +34,8 @@ use super::clients::iam_stats_client::IamStatsClient;
 use super::iam_account_serv::IamAccountServ;
 use super::iam_cert_serv::IamCertServ;
 use super::iam_rel_serv::IamRelServ;
+use super::iam_res_serv::IamResServ;
+use super::iam_role_serv::IamRoleServ;
 use super::iam_sub_deploy_serv::IamSubDeployServ;
 
 const SET_AND_ITEM_SPLIT_FLAG: &str = ":";
@@ -681,9 +683,67 @@ impl IamSetServ {
         global_ctx.own_paths = "".to_string();
         // TODO default empty res
         res_ids.insert("".to_string());
+        // 按角色权限类型收集菜单资源：
+        // - perm_kind = all：保留该角色关联的全部资源
+        // - perm_kind = read：只保留该角色关联资源中 perm_kind = read 的只读资源
+        // 多个角色取并集，全部权限角色关联的资源不会被只读角色裁掉
+        let read_role_ids = if role_ids.is_empty() {
+            HashSet::new()
+        } else {
+            // 先筛出本次角色中的只读角色，避免对每个角色单独查 perm_kind
+            IamRoleServ::find_id_items(
+                &IamRoleFilterReq {
+                    basic: RbumBasicFilterReq {
+                        ids: Some(role_ids.clone()),
+                        with_sub_own_paths: true,
+                        own_paths: Some("".to_string()),
+                        ignore_scope: true,
+                        ..Default::default()
+                    },
+                    perm_kind: Some(IamPermKind::Read),
+                    ..Default::default()
+                },
+                None,
+                None,
+                funs,
+                &global_ctx,
+            )
+            .await?
+            .into_iter()
+            .collect::<HashSet<String>>()
+        };
+        // 只读角色的关联资源先单独收集，后续再按资源 perm_kind 过滤
+        let mut read_role_res_ids = HashSet::new();
         for role_id in role_ids {
             let rel_res_ids = IamRelServ::find_to_id_rels(&IamRelKind::IamResRole, role_id, None, None, funs, &global_ctx).await?;
-            res_ids.extend(rel_res_ids.into_iter());
+            if read_role_ids.contains(role_id) {
+                read_role_res_ids.extend(rel_res_ids.into_iter());
+            } else {
+                // 非只读角色：关联资源全部可见
+                res_ids.extend(rel_res_ids.into_iter());
+            }
+        }
+        if !read_role_res_ids.is_empty() {
+            // 只读角色仅能看到其关联资源中标记为只读的资源
+            let read_res_ids = IamResServ::find_id_items(
+                &IamResFilterReq {
+                    basic: RbumBasicFilterReq {
+                        ids: Some(read_role_res_ids.into_iter().collect()),
+                        with_sub_own_paths: true,
+                        own_paths: Some("".to_string()),
+                        ignore_scope: true,
+                        ..Default::default()
+                    },
+                    perm_kind: Some(IamPermKind::Read),
+                    ..Default::default()
+                },
+                None,
+                None,
+                funs,
+                &global_ctx,
+            )
+            .await?;
+            res_ids.extend(read_res_ids.into_iter());
         }
         let mut filter = RbumSetTreeFilterReq {
             fetch_cate_item: true,
