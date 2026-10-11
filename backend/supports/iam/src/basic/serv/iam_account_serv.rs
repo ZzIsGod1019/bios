@@ -47,7 +47,7 @@ use crate::basic::serv::iam_tenant_serv::IamTenantServ;
 use crate::iam_config::IamBasicConfigApi;
 use crate::iam_config::{IamBasicInfoManager, IamConfig};
 use crate::iam_constants::{self, RBUM_SCOPE_LEVEL_APP};
-use crate::iam_enumeration::{IamAccountLockStateKind, IamAccountStatusKind, IamCertKernelKind, IamRelKind, IamSetKind};
+use crate::iam_enumeration::{IamAccountLockStateKind, IamAccountStatusKind, IamCertKernelKind, IamPermKind, IamRelKind, IamSetKind};
 use crate::integration::ldap::account::account_result::build_account_dn;
 
 use super::clients::iam_log_client::{IamLogClient, LogParamTag};
@@ -964,6 +964,44 @@ impl IamAccountServ {
         ctx: &TardisContext,
     ) -> TardisResult<Vec<RbumRelBoneResp>> {
         IamRelServ::find_from_simple_rels(&IamRelKind::IamAccountRole, with_sub, account_id, desc_by_create, desc_by_update, funs, ctx).await
+    }
+
+    /// 判断当前上下文是否为只读
+    /// 若当前用户只有应用只读角色（iam_basic_role_app_read_id），或者用户角色中存在 perm_kind 为 read 的角色，则上下文为只读
+    pub async fn is_ctx_read_only(funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<bool> {
+        let role_ids = &ctx.roles;
+        if role_ids.is_empty() {
+            return Ok(false);
+        }
+        let app_read_id = funs.iam_basic_role_app_read_id();
+        // 只有应用只读角色
+        if role_ids.len() == 1 && role_ids[0] == app_read_id {
+            return Ok(true);
+        }
+        // 角色中存在 perm_kind 为 read 的角色
+        for role_id in role_ids {
+            if *role_id == app_read_id {
+                continue;
+            }
+            let role = IamRoleServ::peek_item(
+                role_id,
+                &IamRoleFilterReq {
+                    basic: RbumBasicFilterReq {
+                        own_paths: Some("".to_string()),
+                        with_sub_own_paths: true,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                funs,
+                ctx,
+            )
+            .await?;
+            if role.perm_kind == IamPermKind::Read {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     pub async fn delete_tokens(id: &str, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<()> {

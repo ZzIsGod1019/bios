@@ -37,11 +37,13 @@ impl IamCcAppSetApi {
     ///
     /// * Without parameters: Query the whole tree
     /// * ``parent_sys_code=true`` : query only the next level. This can be used to query level by level when the tree is too large
-    /// * ``only_related=true`` : Invalidate the parent_sys_code parameter when this parameter is turned on, it is used to query only the tree nodes with related resources(including children nodes)
+    /// * ``only_related=true`` : Invalidate the parent_sys_code parameter when this parameter is turned on, it is used to query only the tree nodes with related resources(including children nodes).
+    ///   If the account is bound to the platform Apps root set, it implies full access to the tenant's product groups and the whole tree is returned
     /// * Platform context (``own_paths`` is empty): returns merged tree with platform root -> tenants -> app cates; use ``tenant_id`` when ``parent_sys_code`` is an app cate sys_code
     ///  * 无参数：查询整个树
     /// * ``parent_sys_code=true``：仅查询下一级，当树太大时可以用来逐级查询
-    /// * ``only_related=true``：打开此参数时失效parent_sys_code参数，用于查询只有相关资源的树节点（包括子节点）
+    /// * ``only_related=true``：打开此参数时失效parent_sys_code参数，用于查询只有相关资源的树节点（包括子节点）；
+    ///   账号挂载在平台根产品组时等价于拥有当前租户全部产品组，返回完整树
     /// * 平台上下文（``own_paths`` 为空）：返回平台根 -> 租户 -> 产品组的合并树；当 ``parent_sys_code`` 为产品组 sys_code 时需同时传入 ``tenant_id``
     #[oai(path = "/tree", method = "get")]
     async fn get_tree(

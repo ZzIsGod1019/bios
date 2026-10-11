@@ -859,7 +859,23 @@ impl IamSetServ {
     }
 
     /// 按账号权限过滤产品组树：仅返回账号所属节点及其关联应用所在节点（含父级补全）。
+    ///
+    /// 账号挂载在平台 Apps set（根产品组）时，等价于拥有该 set 下的全部产品组树，直接返回完整树。
     pub async fn get_apps_tree_with_auth_by_account(set_id: &str, account_id: &str, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<RbumSetTreeResp> {
+        // 挂在平台根产品组时，根节点等价于拥有该 set 下的全部产品组（含全部应用）
+        if Self::account_bound_on_platform_apps_set(account_id, funs, ctx).await? {
+            return Self::get_tree(
+                set_id,
+                &mut RbumSetTreeFilterReq {
+                    fetch_cate_item: true,
+                    hide_item_with_disabled: true,
+                    ..Default::default()
+                },
+                funs,
+                ctx,
+            )
+            .await;
+        }
         let account_ids = vec![account_id.to_string()];
         let app_ids = IamRelServ::find_from_id_rels(&IamRelKind::IamAccountApp, true, account_id, None, None, funs, ctx).await?;
 
@@ -1050,7 +1066,24 @@ impl IamSetServ {
     }
 
     /// 按账号权限过滤产品组树；无相关节点时返回 `None`。
+    ///
+    /// 账号挂载在平台 Apps set（根产品组）时，等价于拥有该 set 下的全部产品组树，直接返回完整树。
     pub async fn get_apps_tree_with_auth_by_account_opt(set_id: &str, account_id: &str, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<Option<RbumSetTreeResp>> {
+        // 挂在平台根产品组时，根节点等价于拥有该 set 下的全部产品组（含全部应用）
+        if Self::account_bound_on_platform_apps_set(account_id, funs, ctx).await? {
+            let tree = Self::get_tree(
+                set_id,
+                &mut RbumSetTreeFilterReq {
+                    fetch_cate_item: true,
+                    hide_item_with_disabled: true,
+                    ..Default::default()
+                },
+                funs,
+                ctx,
+            )
+            .await?;
+            return Ok(Some(tree));
+        }
         let account_ids = vec![account_id.to_string()];
         let app_ids = IamRelServ::find_from_id_rels(&IamRelKind::IamAccountApp, true, account_id, None, None, funs, ctx).await?;
 
