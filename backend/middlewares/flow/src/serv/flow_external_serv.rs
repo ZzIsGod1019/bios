@@ -538,11 +538,11 @@ impl FlowExternalServ {
         tokio::spawn(async move {
             let funs = flow_constants::get_tardis_inst();
             if let Err(err) = FlowLogClient::addv2_item(
-                LogParamTag::ExternalCall,
+                LogParamTag::FlowExternalCall,
                 key,
                 content,
                 Some(ext),
-                Some("external_call".to_string()),
+                Some("flow_external_call".to_string()),
                 Some(kind_name),
                 None,
                 rel_key,

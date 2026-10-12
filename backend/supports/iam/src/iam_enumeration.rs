@@ -216,6 +216,15 @@ impl IamPermKind {
         }
     }
 
+    /// 角色是否应写入该被绑定资源对应的 API 鉴权。
+    /// `all` 角色始终写入；`read` 角色仅当被绑定资源也是 `read` 时写入。
+    pub fn grants_bound_res(&self, bound_res_perm: &IamPermKind) -> bool {
+        match self {
+            IamPermKind::All => true,
+            IamPermKind::Read => bound_res_perm == &IamPermKind::Read,
+        }
+    }
+
     pub fn parse(kind: &str) -> TardisResult<IamPermKind> {
         match kind.to_lowercase().as_str() {
             "read" => Ok(IamPermKind::Read),
@@ -571,4 +580,17 @@ pub enum OAuth2ResponseType {
     #[strum(serialize = "code")]
     #[oai(rename = "code")]
     Code,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::IamPermKind;
+
+    #[test]
+    fn read_role_grants_only_read_res() {
+        assert!(IamPermKind::All.grants_bound_res(&IamPermKind::All));
+        assert!(IamPermKind::All.grants_bound_res(&IamPermKind::Read));
+        assert!(IamPermKind::Read.grants_bound_res(&IamPermKind::Read));
+        assert!(!IamPermKind::Read.grants_bound_res(&IamPermKind::All));
+    }
 }
