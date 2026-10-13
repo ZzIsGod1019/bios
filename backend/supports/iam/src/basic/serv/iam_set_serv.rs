@@ -27,7 +27,7 @@ use crate::basic::dto::iam_set_dto::{IamResSetTreeExtResp, IamResSetTreeResp, Ia
 use crate::basic::dto::iam_tenant_dto::IamTenantSummaryResp;
 use crate::iam_config::{IamBasicConfigApi, IamConfig};
 use crate::iam_constants::{RBUM_SCOPE_LEVEL_APP, RBUM_SCOPE_LEVEL_TENANT};
-use crate::iam_enumeration::{IamPermKind, IamRelKind, IamSetCateKind, IamSetKind};
+use crate::iam_enumeration::{IamPermKind, IamRelKind, IamResKind, IamResShowScope, IamSetCateKind, IamSetKind};
 
 use super::clients::iam_kv_client::IamKvClient;
 use super::clients::iam_log_client::{IamLogClient, LogParamTag};
@@ -1435,6 +1435,83 @@ impl IamSetServ {
             ctx,
         )
         .await
+    }
+
+    /// 按按钮展示范围过滤菜单树中的按钮。
+    /// 平台层（own_paths 为空）保留全部按钮；租户层和应用层去掉 show_scope = platform 的按钮。
+    pub async fn filter_button_show_scope(tree: &mut IamResSetTreeResp, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<()> {
+        if ctx.own_paths.is_empty() {
+            return Ok(());
+        }
+        let Some(ext) = tree.ext.as_ref() else {
+            return Ok(());
+        };
+        let res_ids = ext.items.values().flatten().map(|item| item.rel_rbum_item_id.clone()).unique().collect_vec();
+        if res_ids.is_empty() {
+            return Ok(());
+        }
+        let global_ctx = TardisContext {
+            own_paths: "".to_string(),
+            ..ctx.clone()
+        };
+        let platform_button_ids = IamResServ::find_items(
+            &IamResFilterReq {
+                basic: RbumBasicFilterReq {
+                    ids: Some(res_ids),
+                    with_sub_own_paths: true,
+                    ..Default::default()
+                },
+                kind: Some(IamResKind::Ele),
+                ..Default::default()
+            },
+            None,
+            None,
+            funs,
+            &global_ctx,
+        )
+        .await?
+        .into_iter()
+        .filter(|res| res.show_scope == IamResShowScope::Platform)
+        .map(|res| res.id)
+        .collect::<HashSet<String>>();
+        if platform_button_ids.is_empty() {
+            return Ok(());
+        }
+        if let Some(ext) = tree.ext.as_mut() {
+            for items in ext.items.values_mut() {
+                items.retain(|item| !platform_button_ids.contains(&item.rel_rbum_item_id));
+            }
+            ext.item_perm_kinds.retain(|id, _| !platform_button_ids.contains(id));
+            ext.item_data_guards.retain(|id, _| !platform_button_ids.contains(id));
+        }
+        if let Some(ext) = tree.ext.as_mut() {
+            ext.item_number_agg = Self::aggregate_item_numbers(&tree.main, &ext.items);
+        }
+        Ok(())
+    }
+
+    fn aggregate_item_numbers(main: &[RbumSetTreeNodeResp], items: &HashMap<String, Vec<RbumSetItemRelInfoResp>>) -> HashMap<String, HashMap<String, u64>> {
+        let count_items = |node_items: &[&RbumSetItemRelInfoResp]| -> HashMap<String, u64> {
+            let mut grouped: HashMap<String, HashSet<String>> = HashMap::new();
+            for item in node_items {
+                grouped.entry(item.rel_rbum_item_kind_id.clone()).or_default().insert(item.rel_rbum_item_id.clone());
+            }
+            grouped.into_iter().map(|(kind_id, ids)| (kind_id, ids.len() as u64)).collect()
+        };
+        let mut item_number_agg = main
+            .iter()
+            .map(|cate| {
+                let cate_items = main
+                    .iter()
+                    .filter(|node| node.sys_code.starts_with(&cate.sys_code))
+                    .flat_map(|node| items.get(&node.id).into_iter().flatten())
+                    .collect_vec();
+                (cate.id.clone(), count_items(&cate_items))
+            })
+            .collect::<HashMap<String, HashMap<String, u64>>>();
+        let root_items = items.values().flatten().collect_vec();
+        item_number_agg.insert("".to_string(), count_items(&root_items));
+        item_number_agg
     }
 
     pub async fn get_api_tree(set_id: &str, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<RbumSetTreeResp> {

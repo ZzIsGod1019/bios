@@ -245,6 +245,62 @@ impl TryGetable for IamPermKind {
     }
 }
 
+/// 按钮展示范围，用于标记资源在全场景展示还是仅在平台层展示
+#[derive(Display, Clone, Debug, Default, PartialEq, Eq, Serialize, poem_openapi::Enum, strum::EnumString)]
+pub enum IamResShowScope {
+    /// 全场景展示
+    #[default]
+    #[strum(serialize = "all")]
+    #[oai(rename = "all")]
+    All,
+    /// 仅平台层展示
+    #[strum(serialize = "platform")]
+    #[oai(rename = "platform")]
+    Platform,
+}
+
+impl<'de> Deserialize<'de> for IamResShowScope {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        match s.to_lowercase().as_str() {
+            "all" | "" => Ok(IamResShowScope::All),
+            "platform" => Ok(IamResShowScope::Platform),
+            _ => Err(serde::de::Error::custom(format!("invalid IamResShowScope: {s}"))),
+        }
+    }
+}
+
+impl IamResShowScope {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            IamResShowScope::All => "all",
+            IamResShowScope::Platform => "platform",
+        }
+    }
+
+    pub fn parse(kind: &str) -> TardisResult<IamResShowScope> {
+        match kind.to_lowercase().as_str() {
+            "all" | "" => Ok(IamResShowScope::All),
+            "platform" => Ok(IamResShowScope::Platform),
+            _ => Err(TardisError::format_error(&format!("invalid IamResShowScope: {kind}"), "406-rbum-*-enum-init-error")),
+        }
+    }
+}
+
+impl TryGetable for IamResShowScope {
+    fn try_get(res: &QueryResult, pre: &str, col: &str) -> Result<Self, TryGetError> {
+        let s = String::try_get(res, pre, col)?;
+        IamResShowScope::parse(&s).map_err(|_| TryGetError::DbErr(DbErr::RecordNotFound(format!("{pre}:{col}"))))
+    }
+
+    fn try_get_by<I: sea_orm::ColIdx>(_res: &QueryResult, _index: I) -> Result<Self, TryGetError> {
+        panic!("not implement")
+    }
+}
+
 #[derive(Display, Clone, Debug, PartialEq, Eq, Deserialize, Serialize, poem_openapi::Enum)]
 pub enum IamSetKind {
     Org,

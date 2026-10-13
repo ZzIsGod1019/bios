@@ -199,6 +199,7 @@ async fn setup_task_grant_fixture(funs: &TardisFunsInst) -> TardisResult<TaskGra
                 extend_role_id: None,
                 disabled: None,
                 deletable: None,
+                perm_kind: None,
             },
             res_ids: None,
         },
