@@ -16,7 +16,7 @@ use bios_basic::rbum::rbum_enumeration::RbumSetCateLevelQueryKind;
 use bios_basic::rbum::serv::rbum_item_serv::RbumItemCrudOperation;
 
 use crate::basic::dto::iam_filer_dto::IamTenantFilterReq;
-use crate::basic::dto::iam_set_dto::IamSetItemWithDefaultSetAddReq;
+use crate::basic::dto::iam_set_dto::{IamAppsSetAccountRoleReq, IamAppsSetAccountRoleResp, IamSetItemWithDefaultSetAddReq};
 use crate::basic::serv::iam_cert_serv::IamCertServ;
 use crate::basic::serv::iam_set_serv::IamSetServ;
 use crate::basic::serv::iam_tenant_serv::IamTenantServ;
@@ -229,6 +229,38 @@ impl IamCcAppSetApi {
         funs.commit().await?;
         ctx.execute_task().await?;
         TardisResp::ok(result)
+    }
+
+    /// Find configured Apps set account roles.
+    /// 查询产品组与账号已配置的上下文角色。``set_id`` 与 ``account_id`` 至少传一个；只返回已保存的配置，不含 app_read 回退。
+    #[oai(path = "/set/account/role", method = "get")]
+    async fn find_account_role(
+        &self,
+        set_id: Query<Option<String>>,
+        account_id: Query<Option<String>>,
+        ctx: TardisContextExtractor,
+        request: &Request,
+    ) -> TardisApiResult<Vec<IamAppsSetAccountRoleResp>> {
+        let funs = iam_constants::get_tardis_inst();
+        let ctx = IamCertServ::use_sys_or_tenant_ctx_unsafe(ctx.0)?;
+        try_set_real_ip_from_req_to_ctx(request, &ctx).await?;
+        let result = IamSetServ::find_apps_set_account_roles(set_id.0, account_id.0, &funs, &ctx).await?;
+        ctx.execute_task().await?;
+        TardisResp::ok(result)
+    }
+
+    /// Set the context role granted by an Apps set for an account.
+    /// 配置产品组绑定后写入应用上下文的角色。未配置的租户产品组沿用平台层配置，平台层也未配置时回退 app_read。
+    #[oai(path = "/set/account/role", method = "put")]
+    async fn set_account_role(&self, req: Json<IamAppsSetAccountRoleReq>, ctx: TardisContextExtractor, request: &Request) -> TardisApiResult<Void> {
+        let mut funs = iam_constants::get_tardis_inst();
+        funs.begin().await?;
+        let ctx = IamCertServ::use_sys_or_tenant_ctx_unsafe(ctx.0)?;
+        try_set_real_ip_from_req_to_ctx(request, &ctx).await?;
+        IamSetServ::save_apps_set_account_role(&req.set_id, &req.account_id, &req.role_id, &funs, &ctx).await?;
+        funs.commit().await?;
+        ctx.execute_task().await?;
+        TardisResp::ok(Void {})
     }
 
     /// Batch Add App Set Item (App Or Account)

@@ -1133,8 +1133,8 @@ impl IamAccountServ {
         let has_platform_set = IamSetServ::account_has_platform_apps_auth(account_id, funs, ctx).await?;
 
         let mut apps = Vec::new();
-        let mut app_role_read = HashMap::new();
-        app_role_read.insert(funs.iam_basic_role_app_read_id(), iam_constants::RBUM_ITEM_NAME_APP_READ_ROLE.to_string());
+        let apps_set_roles = IamSetServ::load_apps_set_account_roles(account_id, funs, ctx).await?;
+        let app_read_role_id = funs.iam_basic_role_app_read_id();
 
         for set in sets {
             // 平台层 Set 仅作为"拥有全部应用权限"的标记，实际应用分布在各租户 Set 中
@@ -1168,6 +1168,7 @@ impl IamAccountServ {
                 IamSetServ::get_app_with_auth_by_account(&set.id, account_id, funs, &tenant_ctx).await?
             };
 
+            let set_account_roles = apps_set_roles.resolve(&set.id, &app_read_role_id);
             for (app_id, app_name) in app_items {
                 if existing_app_ids.contains(&app_id) {
                     continue;
@@ -1178,7 +1179,7 @@ impl IamAccountServ {
                     app_kind: IamAppKind::Product,
                     app_own_paths: format!("{}/{}", tenant_ctx.own_paths, app_id),
                     app_icon: "".to_string(),
-                    roles: app_role_read.clone(),
+                    roles: set_account_roles.clone(),
                     groups: HashMap::default(),
                 });
             }

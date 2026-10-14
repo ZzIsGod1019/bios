@@ -131,6 +131,9 @@ pub enum IamRelKind {
 
     /// 发布系统与租户关联
     IamPublishSystemTenant,
+
+    /// 产品组与账号的上下文角色配置。from 为账号，to 为角色，ext 为 set id
+    IamAccountAppsSetRole,
 }
 
 #[derive(Display, Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize, poem_openapi::Enum)]

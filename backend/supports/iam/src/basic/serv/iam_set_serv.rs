@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use bios_basic::rbum::dto::rbum_filer_dto::{RbumBasicFilterReq, RbumRelFilterReq, RbumSetCateFilterReq, RbumSetFilterReq, RbumSetItemFilterReq, RbumSetTreeFilterReq};
+use bios_basic::rbum::dto::rbum_rel_agg_dto::RbumRelAggAddReq;
+use bios_basic::rbum::dto::rbum_rel_dto::RbumRelAddReq;
 
 use bios_basic::rbum::dto::rbum_set_cate_dto::{RbumSetCateAddReq, RbumSetCateModifyReq, RbumSetCateSummaryResp};
 use bios_basic::rbum::dto::rbum_set_dto::{RbumSetAddReq, RbumSetPathResp, RbumSetSummaryResp, RbumSetTreeExtResp, RbumSetTreeNodeResp, RbumSetTreeResp};
@@ -16,6 +18,7 @@ use itertools::Itertools;
 use tardis::basic::dto::TardisContext;
 use tardis::basic::field::TrimString;
 use tardis::basic::result::TardisResult;
+use tardis::log::warn;
 
 use tardis::chrono::Utc;
 use tardis::serde_json::json;
@@ -23,11 +26,11 @@ use tardis::web::web_resp::TardisPage;
 use tardis::{TardisFuns, TardisFunsInst};
 
 use crate::basic::dto::iam_filer_dto::{IamAccountFilterReq, IamResFilterReq, IamRoleFilterReq};
-use crate::basic::dto::iam_set_dto::{IamResSetTreeExtResp, IamResSetTreeResp, IamSetCateAddReq, IamSetCateModifyReq, IamSetItemAddReq};
+use crate::basic::dto::iam_set_dto::{IamAppsSetAccountRoleResp, IamResSetTreeExtResp, IamResSetTreeResp, IamSetCateAddReq, IamSetCateModifyReq, IamSetItemAddReq};
 use crate::basic::dto::iam_tenant_dto::IamTenantSummaryResp;
 use crate::iam_config::{IamBasicConfigApi, IamConfig};
-use crate::iam_constants::{RBUM_SCOPE_LEVEL_APP, RBUM_SCOPE_LEVEL_TENANT};
-use crate::iam_enumeration::{IamPermKind, IamRelKind, IamResKind, IamResShowScope, IamSetCateKind, IamSetKind};
+use crate::iam_constants::{RBUM_ITEM_NAME_APP_READ_ROLE, RBUM_SCOPE_LEVEL_APP, RBUM_SCOPE_LEVEL_TENANT};
+use crate::iam_enumeration::{IamPermKind, IamRelKind, IamResKind, IamResShowScope, IamRoleKind, IamSetCateKind, IamSetKind};
 
 use super::clients::iam_kv_client::IamKvClient;
 use super::clients::iam_log_client::{IamLogClient, LogParamTag};
@@ -47,6 +50,25 @@ pub const API_ROOT_SET_BUS_CODE: &str = "__apis__";
 pub const DATA_GUARD_ROOT_SET_BUS_CODE: &str = "__data_guards__";
 
 pub struct IamSetServ;
+
+/// 账号在各 Apps set 上配置的上下文角色。set id -> (role id, role code)。
+pub struct IamAppsSetAccountRoleMap {
+    by_set_id: HashMap<String, (String, String)>,
+    platform_set_id: Option<String>,
+}
+
+impl IamAppsSetAccountRoleMap {
+    /// 租户 set 有配置时用租户配置，否则沿用平台根 set 的配置，两边都没有时回退 `app_read`。
+    pub fn resolve(&self, set_id: &str, app_read_role_id: &str) -> HashMap<String, String> {
+        let mut roles = HashMap::new();
+        if let Some((role_id, role_code)) = self.by_set_id.get(set_id).or_else(|| self.platform_set_id.as_ref().and_then(|platform_set_id| self.by_set_id.get(platform_set_id))) {
+            roles.insert(role_id.clone(), role_code.clone());
+        } else {
+            roles.insert(app_read_role_id.to_string(), RBUM_ITEM_NAME_APP_READ_ROLE.to_string());
+        }
+        roles
+    }
+}
 
 impl IamSetServ {
     /// 根据 account_id 和 set_kind 获取对应的 set 列表
@@ -1289,6 +1311,280 @@ impl IamSetServ {
         .iter()
         .map(|r| (r.rel_rbum_item_id.clone(), r.rel_rbum_item_name.clone()))
         .collect())
+    }
+
+    pub async fn load_apps_set_account_roles(account_id: &str, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<IamAppsSetAccountRoleMap> {
+        let sys_ctx = IamCertServ::use_sys_ctx_unsafe(ctx.clone())?;
+        let platform_set_id = RbumSetServ::get_rbum_set_id_by_code(&Self::get_default_code(&IamSetKind::Apps, ""), true, funs, &sys_ctx).await?;
+        let rels = RbumRelServ::find_rbums(
+            &RbumRelFilterReq {
+                basic: RbumBasicFilterReq {
+                    own_paths: Some("".to_string()),
+                    with_sub_own_paths: true,
+                    ..Default::default()
+                },
+                tag: Some(IamRelKind::IamAccountAppsSetRole.to_string()),
+                from_rbum_kind: Some(RbumRelFromKind::Item),
+                from_rbum_id: Some(account_id.to_string()),
+                disabled: Some(false),
+                ..Default::default()
+            },
+            None,
+            Some(true),
+            funs,
+            &sys_ctx,
+        )
+        .await?;
+        let role_ids = rels.iter().map(|rel| rel.to_rbum_item_id.clone()).collect::<Vec<_>>();
+        let role_codes = if role_ids.is_empty() {
+            HashMap::new()
+        } else {
+            IamRoleServ::find_items(
+                &IamRoleFilterReq {
+                    basic: RbumBasicFilterReq {
+                        ids: Some(role_ids),
+                        ignore_scope: true,
+                        own_paths: Some("".to_string()),
+                        with_sub_own_paths: true,
+                        enabled: Some(true),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                None,
+                None,
+                funs,
+                &sys_ctx,
+            )
+            .await?
+            .into_iter()
+            .map(|role| (role.id, role.code))
+            .collect::<HashMap<_, _>>()
+        };
+        let mut by_set_id = HashMap::new();
+        for rel in rels {
+            if rel.ext.is_empty() {
+                continue;
+            }
+            if let Some(role_code) = role_codes.get(&rel.to_rbum_item_id) {
+                by_set_id.entry(rel.ext.clone()).or_insert_with(|| (rel.to_rbum_item_id.clone(), role_code.clone()));
+            }
+        }
+        Ok(IamAppsSetAccountRoleMap { by_set_id, platform_set_id })
+    }
+
+    /// 查询已保存的产品组账号角色配置。`set_id` 与 `account_id` 至少传一个。
+    pub async fn find_apps_set_account_roles(
+        set_id: Option<String>,
+        account_id: Option<String>,
+        funs: &TardisFunsInst,
+        ctx: &TardisContext,
+    ) -> TardisResult<Vec<IamAppsSetAccountRoleResp>> {
+        let set_id = set_id.filter(|id| !id.is_empty());
+        let account_id = account_id.filter(|id| !id.is_empty());
+        if set_id.is_none() && account_id.is_none() {
+            return Err(funs.err().bad_request(
+                "iam_apps_set_account_role",
+                "find",
+                "set_id or account_id is required",
+                "400-iam-apps-set-account-role-filter-required",
+            ));
+        }
+        let sys_ctx = IamCertServ::use_sys_ctx_unsafe(ctx.clone())?;
+        let rels = RbumRelServ::find_rbums(
+            &RbumRelFilterReq {
+                basic: RbumBasicFilterReq {
+                    own_paths: Some("".to_string()),
+                    with_sub_own_paths: true,
+                    ..Default::default()
+                },
+                tag: Some(IamRelKind::IamAccountAppsSetRole.to_string()),
+                from_rbum_kind: Some(RbumRelFromKind::Item),
+                from_rbum_id: account_id,
+                ext_eq: set_id,
+                disabled: Some(false),
+                ..Default::default()
+            },
+            None,
+            Some(true),
+            funs,
+            &sys_ctx,
+        )
+        .await?;
+        let role_ids = rels.iter().map(|rel| rel.to_rbum_item_id.clone()).collect::<Vec<_>>();
+        let role_codes = if role_ids.is_empty() {
+            HashMap::new()
+        } else {
+            IamRoleServ::find_items(
+                &IamRoleFilterReq {
+                    basic: RbumBasicFilterReq {
+                        ids: Some(role_ids),
+                        ignore_scope: true,
+                        own_paths: Some("".to_string()),
+                        with_sub_own_paths: true,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                None,
+                None,
+                funs,
+                &sys_ctx,
+            )
+            .await?
+            .into_iter()
+            .map(|role| (role.id, role.code))
+            .collect::<HashMap<_, _>>()
+        };
+        let mut seen = HashSet::new();
+        let mut result = Vec::new();
+        for rel in rels {
+            if rel.ext.is_empty() || !seen.insert(format!("{}:{}", rel.from_rbum_id, rel.ext)) {
+                continue;
+            }
+            result.push(IamAppsSetAccountRoleResp {
+                set_id: rel.ext,
+                account_id: rel.from_rbum_id.clone(),
+                account_name: rel.from_rbum_item_name,
+                role_id: rel.to_rbum_item_id.clone(),
+                role_code: role_codes.get(&rel.to_rbum_item_id).cloned().unwrap_or_default(),
+                role_name: rel.to_rbum_item_name,
+            });
+        }
+        Ok(result)
+    }
+
+    /// 保存产品组 set 与账号对应的上下文角色，并重刷该账号的应用上下文。
+    pub async fn save_apps_set_account_role(set_id: &str, account_id: &str, role_id: &str, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<()> {
+        let sys_ctx = IamCertServ::use_sys_ctx_unsafe(ctx.clone())?;
+        let set = RbumSetServ::get_rbum(
+            set_id,
+            &RbumSetFilterReq {
+                basic: RbumBasicFilterReq {
+                    own_paths: Some("".to_string()),
+                    with_sub_own_paths: true,
+                    ignore_scope: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            funs,
+            &sys_ctx,
+        )
+        .await?;
+        if set.kind != IamSetKind::Apps.to_string() {
+            return Err(funs.err().bad_request("iam_apps_set_account_role", "save", "set is not an apps set", "400-iam-apps-set-kind-illegal"));
+        }
+        let account = IamAccountServ::get_item(
+            account_id,
+            &IamAccountFilterReq {
+                basic: RbumBasicFilterReq {
+                    ignore_scope: true,
+                    own_paths: Some("".to_string()),
+                    with_sub_own_paths: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            funs,
+            &sys_ctx,
+        )
+        .await?;
+        if account.disabled {
+            return Err(funs.err().bad_request("iam_apps_set_account_role", "save", "account is disabled", "400-iam-account-disabled"));
+        }
+        let role = IamRoleServ::get_item(
+            role_id,
+            &IamRoleFilterReq {
+                basic: RbumBasicFilterReq {
+                    ignore_scope: true,
+                    own_paths: Some("".to_string()),
+                    with_sub_own_paths: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            funs,
+            &sys_ctx,
+        )
+        .await?;
+        if role.disabled || role.kind != IamRoleKind::App || !role.in_base || !role.own_paths.is_empty() {
+            return Err(funs.err().bad_request(
+                "iam_apps_set_account_role",
+                "save",
+                "role must be an enabled global base app role",
+                "400-iam-apps-set-role-not-base-app",
+            ));
+        }
+        let existing = RbumRelServ::find_rbums(
+            &RbumRelFilterReq {
+                basic: RbumBasicFilterReq {
+                    own_paths: Some("".to_string()),
+                    with_sub_own_paths: true,
+                    ..Default::default()
+                },
+                tag: Some(IamRelKind::IamAccountAppsSetRole.to_string()),
+                from_rbum_kind: Some(RbumRelFromKind::Item),
+                from_rbum_id: Some(account_id.to_string()),
+                ext_eq: Some(set_id.to_string()),
+                disabled: Some(false),
+                ..Default::default()
+            },
+            None,
+            None,
+            funs,
+            &sys_ctx,
+        )
+        .await?;
+        if existing.len() == 1 && existing[0].to_rbum_item_id == role_id {
+            return Ok(());
+        }
+        for rel in &existing {
+            RbumRelServ::delete_rbum(&rel.id, funs, &sys_ctx).await?;
+        }
+        let write_ctx = TardisContext {
+            own_paths: account.own_paths.clone(),
+            ..ctx.clone()
+        };
+        RbumRelServ::add_rel(
+            &mut RbumRelAggAddReq {
+                rel: RbumRelAddReq {
+                    tag: IamRelKind::IamAccountAppsSetRole.to_string(),
+                    note: None,
+                    from_rbum_kind: RbumRelFromKind::Item,
+                    from_rbum_id: account_id.to_string(),
+                    to_rbum_item_id: role_id.to_string(),
+                    to_own_paths: role.own_paths.clone(),
+                    ext: Some(set_id.to_string()),
+                    to_is_outside: false,
+                    disabled: None,
+                },
+                attrs: vec![],
+                envs: vec![],
+            },
+            funs,
+            &write_ctx,
+        )
+        .await?;
+        Self::refresh_apps_set_account_context(account_id, &set.own_paths, funs, ctx).await;
+        Ok(())
+    }
+
+    async fn refresh_apps_set_account_context(account_id: &str, set_own_paths: &str, funs: &TardisFunsInst, ctx: &TardisContext) {
+        let refresh_ctx = TardisContext {
+            own_paths: set_own_paths.to_string(),
+            ..ctx.clone()
+        };
+        let refresh_result = if set_own_paths.is_empty() {
+            IamCertServ::add_all_porject_auth(account_id, String::new(), None, funs, &refresh_ctx).await
+        } else {
+            IamCertServ::package_tardis_account_context_and_resp(account_id, set_own_paths, String::new(), None, funs, &refresh_ctx)
+                .await
+                .map(|_| ())
+        };
+        if let Err(err) = refresh_result {
+            warn!("refresh apps set account role context failed, account_id={account_id}, set_own_paths={set_own_paths}, err={err}");
+        }
     }
 
     pub async fn get_menu_tree_by_roles(set_id: &str, role_ids: &Vec<String>, funs: &TardisFunsInst, ctx: &TardisContext) -> TardisResult<RbumSetTreeResp> {
