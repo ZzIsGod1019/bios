@@ -1373,7 +1373,7 @@ impl IamSetServ {
         Ok(IamAppsSetAccountRoleMap { by_set_id, platform_set_id })
     }
 
-    /// 查询已保存的产品组账号角色配置。`set_id` 与 `account_id` 至少传一个。
+    /// 查询已保存的产品组账号角色配置。`set_id` 与 `account_id` 至少传一个，`account_id` 支持逗号分隔的多个账号。
     pub async fn find_apps_set_account_roles(
         set_id: Option<String>,
         account_id: Option<String>,
@@ -1381,8 +1381,8 @@ impl IamSetServ {
         ctx: &TardisContext,
     ) -> TardisResult<Vec<IamAppsSetAccountRoleResp>> {
         let set_id = set_id.filter(|id| !id.is_empty());
-        let account_id = account_id.filter(|id| !id.is_empty());
-        if set_id.is_none() && account_id.is_none() {
+        let account_ids = account_id.map(|ids| ids.split(',').map(|id| id.trim().to_string()).filter(|id| !id.is_empty()).collect::<Vec<_>>()).filter(|ids| !ids.is_empty());
+        if set_id.is_none() && account_ids.is_none() {
             return Err(funs.err().bad_request(
                 "iam_apps_set_account_role",
                 "find",
@@ -1400,7 +1400,7 @@ impl IamSetServ {
                 },
                 tag: Some(IamRelKind::IamAccountAppsSetRole.to_string()),
                 from_rbum_kind: Some(RbumRelFromKind::Item),
-                from_rbum_id: account_id,
+                from_rbum_ids: account_ids,
                 ext_eq: set_id,
                 disabled: Some(false),
                 ..Default::default()

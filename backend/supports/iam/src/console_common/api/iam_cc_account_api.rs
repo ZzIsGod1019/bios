@@ -221,7 +221,7 @@ impl IamCcAccountApi {
     /// Get if current context is read-only
     /// 获取当前上下文是否为只读
     ///
-    /// 若当前用户只有应用只读角色，或者当前用户的角色中存在 perm_kind 为 read 的角色，则当前上下文为只读
+    /// 先过滤出 kind 为 App 的角色；若过滤后的角色非空且全部为只读角色，则当前上下文为只读
     #[oai(path = "/read_only", method = "get")]
     async fn get_read_only(&self, ctx: TardisContextExtractor, request: &Request) -> TardisApiResult<bool> {
         try_set_real_ip_from_req_to_ctx(request, &ctx.0).await?;
