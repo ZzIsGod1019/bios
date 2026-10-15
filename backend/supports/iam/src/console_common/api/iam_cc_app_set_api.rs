@@ -231,8 +231,9 @@ impl IamCcAppSetApi {
         TardisResp::ok(result)
     }
 
-    /// Find configured Apps set account roles.
-    /// 查询产品组与账号已配置的上下文角色。``set_id`` 与 ``account_id`` 至少传一个，``account_id`` 支持逗号分隔的多个账号；只返回已保存的配置，不含 app_read 回退。
+    /// Find effective Apps set account roles.
+    /// 查询产品组与账号按实际规则生效的上下文角色。``account_id`` 必填，支持逗号分隔的多个账号。
+    /// 当前产品组没有配置时沿用平台根产品组的配置；根产品组也没有配置时不返回该账号，不含 app_read 回退。
     #[oai(path = "/set/account/role", method = "get")]
     async fn find_account_role(
         &self,

@@ -79,7 +79,7 @@ pub struct IamAppsSetAccountRoleReq {
     pub role_id: String,
 }
 
-/// 产品组与账号已配置的上下文角色
+/// 产品组与账号按实际规则生效的上下文角色
 #[derive(poem_openapi::Object, Serialize, Deserialize, Debug)]
 pub struct IamAppsSetAccountRoleResp {
     pub set_id: String,

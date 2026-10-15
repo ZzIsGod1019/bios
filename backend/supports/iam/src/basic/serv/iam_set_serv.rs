@@ -1373,7 +1373,8 @@ impl IamSetServ {
         Ok(IamAppsSetAccountRoleMap { by_set_id, platform_set_id })
     }
 
-    /// 查询已保存的产品组账号角色配置。`set_id` 与 `account_id` 至少传一个，`account_id` 支持逗号分隔的多个账号。
+    /// 查询产品组账号按实际规则生效的角色。`account_id` 必填，支持逗号分隔的多个账号。
+    /// 当前 set 有配置时用当前配置；没有时沿用平台根 set 的配置；两边都没有则不返回该账号，不含 app_read 回退。
     pub async fn find_apps_set_account_roles(
         tenant_id: Option<String>,
         account_id: Option<String>,
@@ -1386,15 +1387,16 @@ impl IamSetServ {
         };
         let set_id = IamSetServ::get_default_set_id_by_ctx(&IamSetKind::Apps, &funs, &tenant_ctx).await?;
         let account_ids = account_id.map(|ids| ids.split(',').map(|id| id.trim().to_string()).filter(|id| !id.is_empty()).collect::<Vec<_>>()).filter(|ids| !ids.is_empty());
-        if account_ids.is_none() {
+        let Some(account_ids) = account_ids else {
             return Err(funs.err().bad_request(
                 "iam_apps_set_account_role",
                 "find",
-                "set_id or account_id is required",
+                "account_id is required",
                 "400-iam-apps-set-account-role-filter-required",
             ));
-        }
+        };
         let sys_ctx = IamCertServ::use_sys_ctx_unsafe(ctx.clone())?;
+        let platform_set_id = RbumSetServ::get_rbum_set_id_by_code(&Self::get_default_code(&IamSetKind::Apps, ""), true, funs, &sys_ctx).await?;
         let rels = RbumRelServ::find_rbums(
             &RbumRelFilterReq {
                 basic: RbumBasicFilterReq {
@@ -1404,8 +1406,7 @@ impl IamSetServ {
                 },
                 tag: Some(IamRelKind::IamAccountAppsSetRole.to_string()),
                 from_rbum_kind: Some(RbumRelFromKind::Item),
-                from_rbum_ids: account_ids,
-                ext_eq: Some(set_id),
+                from_rbum_ids: Some(account_ids.clone()),
                 disabled: Some(false),
                 ..Default::default()
             },
@@ -1415,7 +1416,30 @@ impl IamSetServ {
             &sys_ctx,
         )
         .await?;
-        let role_ids = rels.iter().map(|rel| rel.to_rbum_item_id.clone()).collect::<Vec<_>>();
+        let mut rel_by_account_set = HashMap::new();
+        for rel in rels {
+            if rel.ext.is_empty() {
+                continue;
+            }
+            rel_by_account_set.entry((rel.from_rbum_id.clone(), rel.ext.clone())).or_insert(rel);
+        }
+        let mut selected = Vec::new();
+        for account_id in account_ids {
+            if let Some(rel) = rel_by_account_set.remove(&(account_id.clone(), set_id.clone())) {
+                selected.push(rel);
+                continue;
+            }
+            let Some(platform_set_id) = platform_set_id.as_ref() else {
+                continue;
+            };
+            if platform_set_id == &set_id {
+                continue;
+            }
+            if let Some(rel) = rel_by_account_set.remove(&(account_id, platform_set_id.clone())) {
+                selected.push(rel);
+            }
+        }
+        let role_ids = selected.iter().map(|rel| rel.to_rbum_item_id.clone()).collect::<Vec<_>>();
         let role_codes = if role_ids.is_empty() {
             HashMap::new()
         } else {
@@ -1440,12 +1464,8 @@ impl IamSetServ {
             .map(|role| (role.id, role.code))
             .collect::<HashMap<_, _>>()
         };
-        let mut seen = HashSet::new();
         let mut result = Vec::new();
-        for rel in rels {
-            if rel.ext.is_empty() || !seen.insert(format!("{}:{}", rel.from_rbum_id, rel.ext)) {
-                continue;
-            }
+        for rel in selected {
             result.push(IamAppsSetAccountRoleResp {
                 set_id: rel.ext,
                 account_id: rel.from_rbum_id.clone(),
