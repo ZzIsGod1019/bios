@@ -72,8 +72,7 @@ pub struct IamSetItemAddReq {
 /// 按产品组 set 与账号配置写入应用上下文的角色
 #[derive(poem_openapi::Object, Serialize, Deserialize, Debug)]
 pub struct IamAppsSetAccountRoleReq {
-    #[oai(validator(min_length = "2", max_length = "255"))]
-    pub set_id: String,
+    pub tenant_id: Option<String>,
     #[oai(validator(min_length = "2", max_length = "255"))]
     pub account_id: String,
     #[oai(validator(min_length = "2", max_length = "255"))]

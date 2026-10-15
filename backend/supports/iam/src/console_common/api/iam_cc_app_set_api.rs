@@ -236,7 +236,7 @@ impl IamCcAppSetApi {
     #[oai(path = "/set/account/role", method = "get")]
     async fn find_account_role(
         &self,
-        set_id: Query<Option<String>>,
+        tenant_id: Query<Option<String>>,
         account_id: Query<Option<String>>,
         ctx: TardisContextExtractor,
         request: &Request,
@@ -244,7 +244,7 @@ impl IamCcAppSetApi {
         let funs = iam_constants::get_tardis_inst();
         let ctx = IamCertServ::use_sys_or_tenant_ctx_unsafe(ctx.0)?;
         try_set_real_ip_from_req_to_ctx(request, &ctx).await?;
-        let result = IamSetServ::find_apps_set_account_roles(set_id.0, account_id.0, &funs, &ctx).await?;
+        let result = IamSetServ::find_apps_set_account_roles(tenant_id.0, account_id.0, &funs, &ctx).await?;
         ctx.execute_task().await?;
         TardisResp::ok(result)
     }
@@ -257,7 +257,7 @@ impl IamCcAppSetApi {
         funs.begin().await?;
         let ctx = IamCertServ::use_sys_or_tenant_ctx_unsafe(ctx.0)?;
         try_set_real_ip_from_req_to_ctx(request, &ctx).await?;
-        IamSetServ::save_apps_set_account_role(&req.set_id, &req.account_id, &req.role_id, &funs, &ctx).await?;
+        IamSetServ::save_apps_set_account_role(&req, &funs, &ctx).await?;
         funs.commit().await?;
         ctx.execute_task().await?;
         TardisResp::ok(Void {})
