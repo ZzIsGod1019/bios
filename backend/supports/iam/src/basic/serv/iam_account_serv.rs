@@ -974,10 +974,16 @@ impl IamAccountServ {
         if role_ids.is_empty() {
             return Ok(false);
         }
+        // 同时存在 xxx 和 xxx:111 时，过滤掉基础角色 xxx，保留扩展子角色 xxx:111
+        let sub_role_base_ids: HashSet<String> = role_ids.iter().filter_map(|id| id.split_once(':').map(|(base, _)| base.to_string())).collect();
+        let effective_role_ids: Vec<String> = role_ids.iter().filter(|id| !sub_role_base_ids.contains(id.as_str())).cloned().collect();
+        if effective_role_ids.is_empty() {
+            return Ok(false);
+        }
         let app_roles = IamRoleServ::find_items(
             &IamRoleFilterReq {
                 basic: RbumBasicFilterReq {
-                    ids: Some(role_ids.clone()),
+                    ids: Some(effective_role_ids),
                     own_paths: Some("".to_string()),
                     with_sub_own_paths: true,
                     ..Default::default()
