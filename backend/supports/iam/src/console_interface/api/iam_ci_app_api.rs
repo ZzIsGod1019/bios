@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use crate::basic::dto::iam_account_dto::IamAccountDetailResp;
 use crate::basic::dto::iam_app_dto::{IamAppAggAddReq, IamAppAggModifyReq, IamAppBatchModifySetCateReq, IamAppKind};
-use crate::basic::dto::iam_filer_dto::{IamAccountFilterReq, IamAppFilterReq};
+use crate::basic::dto::iam_filer_dto::{IamAccountFilterReq, IamAppFilterReq, IamRoleFilterReq};
 use crate::basic::serv::iam_account_serv::IamAccountServ;
 use crate::basic::serv::iam_app_serv::IamAppServ;
 use crate::basic::serv::iam_role_serv::IamRoleServ;
@@ -360,11 +360,11 @@ impl IamCiAppApi {
     /// Find accounts of a role in a product
     /// 查询产品中指定角色的人员
     ///
-    /// 传入产品 ID 与角色 ID。角色 ID 可以是产品内角色，也可以是其上级模板角色；
+    /// 传入产品 ID 与角色编码。角色编码可以是产品内角色，也可以是其上级模板角色；
     /// 存在产品内派生角色时，按派生角色查询。返回同时属于该产品、且在该产品上下文中关联此角色的账号。
     /// 同时并入产品所属产品组上 `IamAccountAppsSetRole` 的关联账号；产品未挂载产品组时使用平台根产品组。
-    #[oai(path = "/:id/role/:role_id/account", method = "get")]
-    async fn find_role_accounts(&self, id: Path<String>, role_id: Path<String>, mut ctx: TardisContextExtractor, request: &Request) -> TardisApiResult<Vec<IamAccountDetailResp>> {
+    #[oai(path = "/:id/role/:role_code/account", method = "get")]
+    async fn find_role_accounts(&self, id: Path<String>, role_code: Path<String>, mut ctx: TardisContextExtractor, request: &Request) -> TardisApiResult<Vec<IamAccountDetailResp>> {
         let funs = iam_constants::get_tardis_inst();
         check_without_owner_and_unsafe_fill_ctx(request, &funs, &mut ctx.0)?;
         try_set_real_ip_from_req_to_ctx(request, &ctx.0).await?;
@@ -384,9 +384,23 @@ impl IamCiAppApi {
         .await?
         .ok_or_else(|| funs.err().not_found("iam_ci_app", "find_role_accounts", "product is not found", "404-iam-app-not-exist"))?;
         let app_ctx = degrade_own_paths(ctx.0.clone(), &product.own_paths)?;
-        let effective_role_id = match IamRoleServ::get_embed_sub_role_id(&role_id.0, &funs, &app_ctx).await {
+        let role = IamRoleServ::find_one_item(
+            &IamRoleFilterReq {
+                basic: RbumBasicFilterReq {
+                    code: Some(role_code.0.clone()),
+                    with_sub_own_paths: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            &funs,
+            &app_ctx,
+        )
+        .await?
+        .ok_or_else(|| funs.err().not_found("iam_ci_app", "find_role_accounts", "role is not found", "404-iam-role-not-found"))?;
+        let effective_role_id = match IamRoleServ::get_embed_sub_role_id(&role.id, &funs, &app_ctx).await {
             Ok(sub_role_id) => sub_role_id,
-            Err(err) if err.code == "404-iam-role-not-found" => role_id.0.clone(),
+            Err(err) if err.code == "404-iam-role-not-found" => role.id.clone(),
             Err(err) => return Err(err.into()),
         };
         let mut result = IamAccountServ::find_detail_items(
@@ -414,7 +428,7 @@ impl IamCiAppApi {
             &app_ctx,
         )
         .await?;
-        let set_account_ids = IamSetServ::find_apps_set_role_account_ids(&product.id, &product.own_paths, &role_id.0, &funs, &ctx.0).await?;
+        let set_account_ids = IamSetServ::find_apps_set_role_account_ids(&product.id, &product.own_paths, &role.id, &funs, &ctx.0).await?;
         let existed_ids = result.iter().map(|account| account.id.clone()).collect::<HashSet<_>>();
         let missing_ids = set_account_ids.into_iter().filter(|account_id| !existed_ids.contains(account_id)).collect::<Vec<_>>();
         if !missing_ids.is_empty() {
