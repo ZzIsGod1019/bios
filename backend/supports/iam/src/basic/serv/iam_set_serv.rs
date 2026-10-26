@@ -1373,6 +1373,65 @@ impl IamSetServ {
         Ok(IamAppsSetAccountRoleMap { by_set_id, platform_set_id })
     }
 
+    /// 查询产品所属产品组上，指定角色通过 `IamAccountAppsSetRole` 关联的账号。
+    ///
+    /// 先取产品挂载的产品组 set。未挂载或 set id 为空时，回退到平台根产品组。
+    /// 关联的 `ext` 为 set id，`to` 为角色，`from` 为账号。
+    pub async fn find_apps_set_role_account_ids(
+        product_id: &str,
+        product_own_paths: &str,
+        role_id: &str,
+        funs: &TardisFunsInst,
+        ctx: &TardisContext,
+    ) -> TardisResult<Vec<String>> {
+        let sys_ctx = IamCertServ::use_sys_ctx_unsafe(ctx.clone())?;
+        let Some(set_id) = Self::resolve_product_apps_set_id(product_id, product_own_paths, funs, &sys_ctx).await? else {
+            return Ok(vec![]);
+        };
+        let rels = RbumRelServ::find_rbums(
+            &RbumRelFilterReq {
+                basic: RbumBasicFilterReq {
+                    own_paths: Some("".to_string()),
+                    with_sub_own_paths: true,
+                    ..Default::default()
+                },
+                tag: Some(IamRelKind::IamAccountAppsSetRole.to_string()),
+                from_rbum_kind: Some(RbumRelFromKind::Item),
+                to_rbum_item_id: Some(role_id.to_string()),
+                ext_eq: Some(set_id),
+                disabled: Some(false),
+                ..Default::default()
+            },
+            None,
+            None,
+            funs,
+            &sys_ctx,
+        )
+        .await?;
+        Ok(rels.into_iter().map(|rel| rel.from_rbum_id).collect())
+    }
+
+    /// 产品挂载的 Apps set。未挂到产品组时使用平台根产品组。
+    async fn resolve_product_apps_set_id(product_id: &str, product_own_paths: &str, funs: &TardisFunsInst, sys_ctx: &TardisContext) -> TardisResult<Option<String>> {
+        let platform_set_id = RbumSetServ::get_rbum_set_id_by_code(&Self::get_default_code(&IamSetKind::Apps, ""), true, funs, sys_ctx).await?;
+        let tenant_own_paths = rbum_scope_helper::get_path_item(RBUM_SCOPE_LEVEL_TENANT.to_int(), product_own_paths).unwrap_or_default();
+        let tenant_set_id = if tenant_own_paths.is_empty() {
+            None
+        } else {
+            RbumSetServ::get_rbum_set_id_by_code(&Self::get_default_code(&IamSetKind::Apps, &tenant_own_paths), true, funs, sys_ctx).await?
+        };
+        let mounted_set_ids = Self::find_set_items(None, None, Some(product_id.to_string()), None, true, Some(true), funs, sys_ctx)
+            .await?
+            .into_iter()
+            .map(|item| item.rel_rbum_set_id)
+            .filter(|set_id| !set_id.is_empty())
+            .collect::<HashSet<_>>();
+        if let Some(tenant_set_id) = tenant_set_id.filter(|set_id| mounted_set_ids.contains(set_id)) {
+            return Ok(Some(tenant_set_id));
+        }
+        Ok(platform_set_id)
+    }
+
     /// 查询产品组账号按实际规则生效的角色。`account_id` 必填，支持逗号分隔的多个账号。
     /// 当前 set 有配置时用当前配置；没有时沿用平台根 set 的配置；两边都没有则不返回该账号，不含 app_read 回退。
     pub async fn find_apps_set_account_roles(
