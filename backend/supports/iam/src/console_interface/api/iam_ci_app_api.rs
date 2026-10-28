@@ -364,7 +364,13 @@ impl IamCiAppApi {
     /// 存在产品内派生角色时，按派生角色查询。返回同时属于该产品、且在该产品上下文中关联这些角色的账号（去重）。
     /// 同时并入产品所属产品组上 `IamAccountAppsSetRole` 的关联账号；产品未挂载产品组时使用平台根产品组。
     #[oai(path = "/:id/role_codes/:role_codes/account", method = "get")]
-    async fn find_role_accounts(&self, id: Path<String>, role_codes: Path<String>, mut ctx: TardisContextExtractor, request: &Request) -> TardisApiResult<Vec<IamAccountDetailResp>> {
+    async fn find_role_accounts(
+        &self,
+        id: Path<String>,
+        role_codes: Path<String>,
+        mut ctx: TardisContextExtractor,
+        request: &Request,
+    ) -> TardisApiResult<Vec<IamAccountDetailResp>> {
         let funs = iam_constants::get_tardis_inst();
         check_without_owner_and_unsafe_fill_ctx(request, &funs, &mut ctx.0)?;
         try_set_real_ip_from_req_to_ctx(request, &ctx.0).await?;

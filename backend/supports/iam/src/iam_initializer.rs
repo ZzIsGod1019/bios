@@ -39,7 +39,7 @@ use crate::console_common::api::{
 };
 use crate::console_interface::api::{
     iam_ci_account_api, iam_ci_app_api, iam_ci_app_set_api, iam_ci_cert_api, iam_ci_open_api, iam_ci_org_api, iam_ci_publish_system_api, iam_ci_res_api, iam_ci_role_api,
-    iam_ci_sub_deploy_api, iam_ci_system_api,
+    iam_ci_sub_deploy_api, iam_ci_system_api, iam_ci_temp_api,
 };
 use crate::console_passport::api::{iam_cp_account_api, iam_cp_app_api, iam_cp_cert_api, iam_cp_oauth2_service_api, iam_cp_tenant_api};
 use crate::console_system::api::{
@@ -150,6 +150,7 @@ async fn init_api(web_server: &TardisWebServer) -> TardisResult<()> {
                     iam_ci_account_api::IamCiAccountApi,
                     iam_ci_sub_deploy_api::IamCiSubDeployApi,
                     iam_ci_system_api::IamCiSystemApi,
+                    iam_ci_temp_api::IamCiTempApi,
                     iam_ci_publish_system_api::IamCiPublishSystemApi,
                     iam_ci_open_api::IamCiOpenApi,
                     iam_ci_org_api::IamCiOrgApi,
