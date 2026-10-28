@@ -1377,6 +1377,11 @@ impl IamSetServ {
     ///
     /// 先取产品挂载的产品组 set。未挂载或 set id 为空时，回退到平台根产品组。
     /// 关联的 `ext` 为 set id，`to` 为角色，`from` 为账号。
+    ///
+    /// 组装规则：
+    /// 1. 优先返回当前产品组 set 下当前角色关联的账号；
+    /// 2. 再取平台根产品组 set 下当前角色关联的账号，剔除其中在当前产品组 set 下已绑定任意角色的账号；
+    /// 3. 两部分合并去重后返回。
     pub async fn find_apps_set_role_account_ids(
         product_id: &str,
         product_own_paths: &str,
@@ -1388,7 +1393,8 @@ impl IamSetServ {
         let Some(set_id) = Self::resolve_product_apps_set_id(product_id, product_own_paths, funs, &sys_ctx).await? else {
             return Ok(vec![]);
         };
-        let rels = RbumRelServ::find_rbums(
+        // 当前产品组 set 下所有角色（不限当前角色）的关联关系
+        let current_set_rels = RbumRelServ::find_rbums(
             &RbumRelFilterReq {
                 basic: RbumBasicFilterReq {
                     own_paths: Some("".to_string()),
@@ -1397,8 +1403,7 @@ impl IamSetServ {
                 },
                 tag: Some(IamRelKind::IamAccountAppsSetRole.to_string()),
                 from_rbum_kind: Some(RbumRelFromKind::Item),
-                to_rbum_item_id: Some(role_id.to_string()),
-                ext_eq: Some(set_id),
+                ext_eq: Some(set_id.clone()),
                 disabled: Some(false),
                 ..Default::default()
             },
@@ -1408,7 +1413,42 @@ impl IamSetServ {
             &sys_ctx,
         )
         .await?;
-        Ok(rels.into_iter().map(|rel| rel.from_rbum_id).collect())
+        // 当前产品组下当前角色关联的账号
+        let mut result: HashSet<String> = current_set_rels
+            .iter()
+            .filter(|rel| rel.to_rbum_item_id == role_id)
+            .map(|rel| rel.from_rbum_id.clone())
+            .collect();
+        // 当前产品组与平台根产品组为同一个 set 时，无需再合并平台层关联
+        let platform_set_id = RbumSetServ::get_rbum_set_id_by_code(&Self::get_default_code(&IamSetKind::Apps, ""), true, funs, &sys_ctx).await?;
+        if platform_set_id.is_none() || platform_set_id.as_ref() == Some(&set_id) {
+            return Ok(result.into_iter().collect());
+        }
+        // 平台根产品组 set 下当前角色关联的账号
+        let platform_set_rels = RbumRelServ::find_rbums(
+            &RbumRelFilterReq {
+                basic: RbumBasicFilterReq {
+                    own_paths: Some("".to_string()),
+                    with_sub_own_paths: true,
+                    ..Default::default()
+                },
+                tag: Some(IamRelKind::IamAccountAppsSetRole.to_string()),
+                from_rbum_kind: Some(RbumRelFromKind::Item),
+                to_rbum_item_id: Some(role_id.to_string()),
+                ext_eq: Some(platform_set_id.unwrap()),
+                disabled: Some(false),
+                ..Default::default()
+            },
+            None,
+            None,
+            funs,
+            &sys_ctx,
+        )
+        .await?;
+        // 当前产品组下已绑定任意角色的账号集合，用于过滤平台层关联账号
+        let current_set_account_ids = current_set_rels.iter().map(|rel| rel.from_rbum_id.clone()).collect::<HashSet<_>>();
+        result.extend(platform_set_rels.into_iter().map(|rel| rel.from_rbum_id).filter(|account_id| !current_set_account_ids.contains(account_id)));
+        Ok(result.into_iter().collect())
     }
 
     /// 产品挂载的 Apps set。未挂到产品组时使用平台根产品组。
